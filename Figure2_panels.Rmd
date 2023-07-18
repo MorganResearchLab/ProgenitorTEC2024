@@ -1,0 +1,1630 @@
+---
+title: "Perinatal Thymus Figure 2 analyses"
+output: html_notebook
+---
+
+This notebook performs the analyses and generates the 2nd figure panels for our Perinatal TEC manuscript.
+
+```{r, warning=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+library(SingleCellExperiment)
+library(miloR)
+library(edgeR)
+library(ggplot2)
+library(scattermore)
+library(ggrastr)
+library(scales)
+library(cowplot)
+library(ggsci)
+library(reshape2)
+library(ggthemes)
+library(biomaRt)
+library(viridis)
+library(ComplexHeatmap)
+library(circlize)
+library(msigdbr)
+library(fgsea)
+library(stringr)
+library(kableExtra)
+library(igraph)
+library(CellChat)
+library(BiocNeighbors)
+library(knitr)})
+```
+
+## Descriptive summaries
+
+The input is the Milo object which contains the post-QC single-cells, and the inferred nhoods.
+
+```{r}
+# derive all of the relevant meta data
+perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+
+colData(perinatal.milo)$SortType <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
+colData(perinatal.milo)$TECSort <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
+colData(perinatal.milo)$Day <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\2")
+colData(perinatal.milo)$Day[colData(perinatal.milo)$Day %in% c("d20")] <- "d2"
+colData(perinatal.milo)$Replicate <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\4")
+```
+
+The Milo object contains ~64,000 cells organised in >2500 overlapping neighbourhoods. The question we wish to answer, is which populations are 
+differentially abundant between time points, and between the ZsG+ and ZsG+ animals.
+
+First we can do some visualisation, overlaying gene expression and other information onto the UMAP co-ordinates.
+
+```{r, warning=FALSE, message=FALSE}
+perinatal.goi.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_GeneGOI.tsv",
+                         sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+perinatal.umap.df <- as.data.frame(reducedDim(perinatal.milo, "UMAP"))
+perinatal.umap.df$CellID <- colnames(perinatal.milo)
+
+perinatal.fr.df <- as.data.frame(reducedDim(perinatal.milo, "FR"))
+perinatal.fr.df$CellID <- colnames(perinatal.milo)
+
+perinatal.meta <- as.data.frame(colData(perinatal.milo))
+perinatal.meta$CellID <- colnames(perinatal.milo)
+
+# get the kNN-based labels
+knn.labels <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_SMARTcombined_Labels.tsv",
+                         sep="\t", header=TRUE, stringsAsFactors=FALSE)
+knn.labels$Cluster[is.na(knn.labels$Cluster)] <- "Missing"
+
+inter.cols <- c("#9970ab", "#35978f", "#B0cdc1", "#762a83", "#01665e", "#e7d4e8", "#dfc27d", "#8c510a" ,"#bf812d", "black")
+names(inter.cols) <- c("Post-Aire mTEC", 'Intertypical TEC','Mature cTEC', 'Tuft-like mTEC', 
+                       'Proliferating TEC', 'Mature mTEC', 'nTEC', 'Perinatal cTEC', 'sTEC', "Missing")
+
+perinatal.protein.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_ProteinGOI.tsv",
+                                   sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+perinatal.cluster <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_clusters.tsv",
+                                sep="\t", header=TRUE, stringsAsFactors=FALSE)
+colnames(perinatal.cluster) <- c("CellID", "Graph.Cluster")
+
+n.clust <- length(unique(perinatal.cluster$Graph.Cluster))
+clust.cols <- colorRampPalette(pal_d3("category20")(20))(n.clust)
+names(clust.cols) <- unique(perinatal.cluster$Graph.Cluster)
+
+perinatal.umap.merge <- Reduce(x=list(perinatal.meta, perinatal.fr.df, perinatal.umap.df, perinatal.goi.df, perinatal.protein.df, 
+                                      perinatal.cluster, knn.labels),
+                               f=function(x, y) merge(x, y, by='CellID'))
+
+table(perinatal.umap.merge$Cluster, perinatal.umap.merge$TECSort)
+```
+
+These labels are assigned using the label transfer approach based on the a majority vote of MNNs. I've also performed a clustering on these same data.
+
+```{r}
+table(perinatal.umap.merge$Cluster, perinatal.umap.merge$Graph.Cluster)
+```
+
+
+The overlap between the MNN-based labels and the clustering isn't particularly clear cut, and reflects the continuous nature of the transitions 
+between TEC states. We can get a broad idea of which regions of the FR layout represent the different TEC states.
+
+```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=9.15}
+goi <- c("Aire", "Psmb11", "Ly6a", "Ccl21a", "Cxcl12", "Krt5", "Krt80", "Avil", "Epcam",
+         "Car8", "Cd52", "Cdk1", "Top2a", "Lifr", "Spink5", "Foxn1", "MHCI", "Ly6A", "CD24", "CD86")
+plot.list <- list()
+for(x in seq_along(goi)){
+    x.df <- perinatal.umap.merge[, c("FR1", "FR2", "UMAP1", "UMAP2", goi[x])]
+    colnames(x.df) <- c("FR1", "FR2", "UMAP1", "UMAP2", "Gene")
+    gtitle <- goi[x]
+    if(gtitle == "MHCI"){
+        gtitle <- "MHCII"
+    }
+    
+    fr.plot <- ggplot(x.df,
+       aes(x=FR1, y=FR2)) +
+        geom_scattermore(data=x.df[, c("FR1", "FR2")], colour='grey80') +
+        geom_scattermore(aes(colour=Gene), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+    
+    ggsave(plot=fr.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-FR_", gtitle, ".png"),
+       height=3.95, width=4.15, dpi=300, bg = 'white')
+    
+    umap.plot <- ggplot(x.df,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=Gene), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+    
+    ggsave(plot=umap.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-UMAP_", gtitle, ".png"),
+       height=3.95, width=4.15, dpi=300, bg = 'white')
+    
+    plot.list[[goi[x]]] <- plot_grid(fr.plot, umap.plot, labels=c("FR", "UMAP"))
+}
+
+plot.list
+```
+
+
+
+# Milo analysis
+
+Now I'll set up the design matrix for Milo DA testing.
+
+```{r, warning=FALSE, message=FALSE}
+htos <- unique(perinatal.milo$HTO)
+day <- gsub(htos, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\2")
+day[day %in% c("d20")] <- "d2"
+sort.type <- gsub(htos, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
+tec.sort <- gsub(htos, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
+rep.num <- gsub(htos, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\4")
+
+perinatal.hto.df <- data.frame("HTO"=htos, "Day"=day, "SortType"=sort.type, "Replicate"=rep.num, "TECSort"=tec.sort)
+perinatal.hto.df$Day.TEC <- paste(perinatal.hto.df$Day, perinatal.hto.df$TECSort, sep="_")
+perinatal.hto.df$Day.Sort <- paste(perinatal.hto.df$Day, perinatal.hto.df$SortType, sep="_")
+perinatal.hto.df$TEC.ZsG <- paste(perinatal.hto.df$TECSort, perinatal.hto.df$SortType, sep="_")
+
+rownames(perinatal.hto.df) <- perinatal.hto.df$HTO
+perinatal.hto.df
+```
+
+I'll use the `testNhoods` function for this, as it should be a simple A vs. B analysis, and I'll include the sorting fraction variables to adjust 
+for these differences in my initial analysis. My second analysis will then compare the results of the ZsG+ and ZsG- specific DA analyses. This will 
+show us which composition changes in the TEC are specific to cells that are derived from a $\beta$5t+ progenitor vs. those that are not.
+
+
+```{r, warning=FALSE, message=FALSE}
+perinatal.res <- testNhoods(perinatal.milo, design.df=perinatal.hto.df, design=~SortType + TECSort + Day, fdr.weighting="graph-overlap")
+table(perinatal.res$SpatialFDR < 0.1)
+```
+
+In our first analysis we have `r sum(perinatal.res$SpatialFDR < 0.1)` DA neighbourhoods. Where are they in the FR representation, and what do these 
+cells represent?
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=7.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=perinatal.res, alpha=0.1, layout='FR') +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_logFC-Day_ZsGadjusted.png",
+           heigh=5.15, width=7.95, dpi=300)
+```
+
+I've chosen the FR layout as it better preserve the neighbourhood relationships than does a UMAP. We can see this if we plot the UMAP below and 
+see how nhoods that share cells are placed very far apart in the UMAP.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=7.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=perinatal.res, alpha=0.1, layout='UMAP') +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_logFC-Day_ZsGadjusted.png",
+           heigh=5.15, width=7.95, dpi=300)
+```
+
+This result also shows us that, when adjusting for the ZsG sorting fraction, the major changes occur in the cTEC compartment. There looks to be a 
+subtle depletion in the top left corner that maps to a subset of the Sca1+ (Ly6a) Intertypical TEC; some of these might be cTEC-biased as they 
+express _Cxcl12_, a canonical marker of cTEC. However, there is also another Sca1+ subset that appear to be depleted but do not express specific 
+lineage markers.
+
+Although strictly not a question for the paper - we do want to know about which populations are derived from a $\beta$5t+ progenitor and those 
+that are not.
+
+```{r, warning=FALSE, message=FALSE}
+perinatal.hto.df$SortType <- factor(perinatal.hto.df$SortType,
+                                    levels=c("ZsGn", "ZsGp"))
+perinatal.res.sort <- testNhoods(perinatal.milo, design.df=perinatal.hto.df, design=~TECSort + Day + SortType, fdr.weighting="graph-overlap")
+table(perinatal.res.sort$SpatialFDR < 0.1)
+```
+
+Adjusting now for age and TEC sorting fraction, we are testing the differences between the ZsG- and ZsG+ cells - there are 
+`r sum(perinatal.res$SpatialFDR < 0.1)` DA nhoods - I would expect most of the enriched Nhoods to be in the cTEC compartment.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=5.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=perinatal.res.sort, alpha=0.1, layout='FR') +
+    NULL
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_logFC-ZsG_Day_TECsort.png",
+           heigh=5.15, width=5.95, dpi=300)
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.15, fig.width=5.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=perinatal.res.sort, alpha=0.1, layout='UMAP') +
+    NULL
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_logFC-ZsG_Day_TECsort.png",
+           heigh=5.15, width=5.95, dpi=300)
+```
+
+We can really start to see the differences in the cTEC and Intertypical TEC compartments starting to emerge now. As expected the biggest depletion 
+is in the mTEC and mTEC-biased Intertypical TEC. Interestingly there is quite a strong enrichment of ZsG+ in the most mature mTEC. The extent of 
+this enrichment suggests that it is _not_ due to pGE, but something more consistent, like the Post-Aire mTEC expression of _Psmb11_ itself perhaps?
+However, this interpretation is at odds with the observed single-cell expression patterns of _Psmb11_, which is only detected in a restricted 
+subset of mature mTEC, and these are not appreciably enriched in the DA analysis.
+
+We also need to consider that ZsG- cells can also arise _after_ the dox treatment, particularly 10 days after dox treatment.
+
+## Milo analysis - ZsG+ day 2 vs. day 10
+
+Now lets focus in on the comparison of the ZsG+ cells between time points
+
+```{r, warning=FALSE, message=FALSE}
+perinatal.int.dge <- DGEList(nhoodCounts(perinatal.milo), lib.size=log(colSums(nhoodCounts(perinatal.milo))))
+perinatal.hto.df <- perinatal.hto.df[colnames(nhoodCounts(perinatal.milo)), ]
+
+zsgp.perinatal.int.model <- model.matrix(~ 0 + Day.Sort + TECSort, data=perinatal.hto.df)
+zsgp.perinatal.int.contrast <- makeContrasts("(Day.Sortd10_ZsGp - Day.Sortd2_ZsGp)",
+                                       levels=zsgp.perinatal.int.model)
+zsgp.perinatal.int.dge <- estimateDisp(perinatal.int.dge, zsgp.perinatal.int.model)
+zsgp.perinatal.int.fit <- glmQLFit(zsgp.perinatal.int.dge, zsgp.perinatal.int.model, robust=TRUE)
+
+zsgp.perinatal.int.res <- as.data.frame(topTags(glmQLFTest(zsgp.perinatal.int.fit, contrast=zsgp.perinatal.int.contrast),
+                                          sort.by='none', n=Inf))
+zsgp.perinatal.int.res$Nhood <- as.numeric(rownames(zsgp.perinatal.int.res))
+
+zsgp.perinatal.int.res$SpatialFDR <- graphSpatialFDR(nhoods(perinatal.milo), graph=miloR::graph(perinatal.milo), weighting='graph-overlap',
+                                                     pvalues=zsgp.perinatal.int.res[order(zsgp.perinatal.int.res$Nhood), ]$PValue,
+                                                     indices=nhoodIndex(perinatal.milo), distances=nhoodDistances(perinatal.milo),
+                                                     k=perinatal.milo@.k)
+table(zsgp.perinatal.int.res$SpatialFDR < 0.1)
+```
+
+If we test comparing the ZsG+ day2 cells against the ZsG+ day 10 cells we get >700 DA neighbours. Again this model is adjusted for the cTEC/mTEC 
+sorting.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=zsgp.perinatal.int.res, alpha=0.1, layout='FR')
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_logFC-ZsGpos_Day_TECsortadjusted.png",
+           heigh=5.95, width=7.95, dpi=300)
+```
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=zsgp.perinatal.int.res, alpha=0.1, layout='UMAP')
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_logFC-ZsGpos_Day_TECsortadjusted.png",
+           heigh=5.95, width=7.95, dpi=300)
+```
+
+The strongest enrichment is the depletion of a subset of the day2 cTEC and concomitant enrichment in the sub-state of the mature cTEC. We also see an 
+accumulation of ZsG+ cells in the Intertypical TEC; we don't know if these are lineage biased or not. We are also starting to see an enrichment at 
+day 10 of some proliferating ZsG+ mTEC, which hasn't yet filtered all of the way through the mTEC trajectory.
+
+I'll perform the same analysis in the ZsG- as this might give us an idea of cells that arose a) before the dox treatment, b) much later than the dox 
+treatment, and c) from a Psmb11-ve progenitor.
+
+```{r, warning=FALSE, message=FALSE}
+zsgn.perinatal.int.model <- model.matrix(~ 0 + Day.Sort + TECSort, data=perinatal.hto.df)
+zsgn.perinatal.int.contrast <- makeContrasts("(Day.Sortd10_ZsGn - Day.Sortd2_ZsGn)",
+                                       levels=zsgn.perinatal.int.model)
+zsgn.perinatal.int.dge <- estimateDisp(perinatal.int.dge, zsgn.perinatal.int.model)
+zsgn.perinatal.int.fit <- glmQLFit(zsgn.perinatal.int.dge, zsgn.perinatal.int.model, robust=TRUE)
+
+zsgn.perinatal.int.res <- as.data.frame(topTags(glmQLFTest(zsgn.perinatal.int.fit, contrast=zsgn.perinatal.int.contrast),
+                                          sort.by='none', n=Inf))
+zsgn.perinatal.int.res$Nhood <- as.numeric(rownames(zsgn.perinatal.int.res))
+
+zsgn.perinatal.int.res$SpatialFDR <- graphSpatialFDR(nhoods(perinatal.milo), graph=miloR::graph(perinatal.milo), weighting='graph-overlap',
+                                                     pvalues=zsgn.perinatal.int.res[order(zsgn.perinatal.int.res$Nhood), ]$PValue,
+                                                     indices=nhoodIndex(perinatal.milo), distances=nhoodDistances(perinatal.milo),
+                                                     k=perinatal.milo@.k)
+table(zsgn.perinatal.int.res$SpatialFDR < 0.1)
+```
+
+If we compare the ZsG-ve day2 cells against the ZsG-ve day 10 cells we get >700 DA neighbourhoods again. As before, this model is adjusted for the 
+cTEC/mTEC sorting.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=zsgn.perinatal.int.res, alpha=0.1, layout='FR')
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_logFC-ZsGneg_Day_TECsortadjusted.png",
+           heigh=5.95, width=7.95, dpi=300)
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
+plotNhoodGraphDA(perinatal.milo, milo_res=zsgn.perinatal.int.res, alpha=0.1, layout='UMAP')
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_logFC-ZsGneg_Day_TECsortadjusted.png",
+           heigh=5.95, width=7.95, dpi=300)
+```
+
+These DA results indicate that there is a general change from day2 to day10 in the cTEC compartment, regardless of ZsG-status. This suggests a pretty 
+strong transcriptional shift from 9 day to 19 day-old mice, particularly in the proliferative compartment of these cTEC. There is also a depletion 
+of some Intertypical TEC, which contrasts with the ZsG +ve analysis above. There also, however, a subset of Intertypical TEC that 
+are enriched at day10 in both the ZsG+ and ZsG- analyses - the question then is: are these the same or distinct nhoods?
+
+## Milo comparison analysis
+
+```{r, warning=FALSE, message=FALSE}
+colnames(zsgn.perinatal.int.res) <- c("ZsGneg.logFC", "ZsGneg.logCPM", "ZsGneg.F", "ZsGneg.PValue", "ZsGneg.FDR", "Nhood", "ZsGneg.SpatialFDR")
+colnames(zsgp.perinatal.int.res) <- c("ZsGpos.logFC", "ZsGpos.logCPM", "ZsGpos.F", "ZsGpos.PValue", "ZsGpos.FDR", "Nhood", "ZsGpos.SpatialFDR")
+
+zsg.milo.compare <- merge(zsgp.perinatal.int.res, zsgn.perinatal.int.res, by=c("Nhood"))
+
+zsg.milo.compare$Direction <- "None"
+zsg.milo.compare$Direction[zsg.milo.compare$ZsGpos.SpatialFDR < 0.1 & zsg.milo.compare$ZsGneg.SpatialFDR < 0.1] <- "Concordant"
+zsg.milo.compare$Direction[zsg.milo.compare$ZsGpos.SpatialFDR > 0.1 & zsg.milo.compare$ZsGneg.SpatialFDR < 0.1] <- "ZsG- DA"
+zsg.milo.compare$Direction[zsg.milo.compare$ZsGpos.SpatialFDR < 0.1 & zsg.milo.compare$ZsGneg.SpatialFDR > 0.1] <- "ZsG+ DA"
+zsg.milo.compare$Direction[(zsg.milo.compare$ZsGpos.SpatialFDR < 0.1 & zsg.milo.compare$ZsGneg.SpatialFDR < 0.1) &
+                               (zsg.milo.compare$ZsGneg.logFC > 0 & zsg.milo.compare$ZsGpos.logFC < 0)] <- "Discordant"
+zsg.milo.compare$Direction[(zsg.milo.compare$ZsGpos.SpatialFDR < 0.1 & zsg.milo.compare$ZsGneg.SpatialFDR < 0.1) &
+                               (zsg.milo.compare$ZsGneg.logFC < 0 & zsg.milo.compare$ZsGpos.logFC > 0)] <- "Discordant"
+zsg.milo.compare$Direction[zsg.milo.compare$ZsGpos.SpatialFDR >= 0.1 & zsg.milo.compare$ZsGneg.SpatialFDR >= 0.1] <- "None"
+```
+
+Naively, I will compare the logFC between the two of analyses.
+
+```{r, fig.height=3.25, fig.width=4.75}
+da.cols <- c("orange", "skyblue", "grey80", "green", "purple")
+names(da.cols) <- c("Discordant", "Concordant", "None", "ZsG+ DA", "ZsG- DA")
+
+ggplot(zsg.milo.compare, aes(x=ZsGpos.logFC, ZsGneg.logFC, colour=Direction)) +
+    geom_vline(xintercept=0, lty=2, col='grey80') +
+    geom_hline(yintercept=0, lty=2, col='grey80') +
+    geom_point() +
+    theme_cowplot() +
+    scale_colour_manual(values=da.cols) +
+    labs(x="ZsG+ logFC", y="ZsG- logFC") +
+    guides(colour=guide_legend(title="DA direction", override.aes=list(size=3, shape=15))) +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_DA_ZsGneg-vs-ZsGpos-scatter.png",
+       height=3.25, width=4.75, bg='white', dpi=300)
+```
+
+In general the effects are concordant across nhoods. However, there are also some fraction-specific as well as discordant nhoods. We wish to know 
+_which_ nhoods (as in which TEC state they correspond to) are con/discordantly DA. To do this, I will group all of the nhoods together, then use 
+them to annotate these DA nhoods.
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(42)
+perinatal.res <- groupNhoods(perinatal.milo, perinatal.res, da.fdr=0.1, overlap=5, merge.discord=FALSE)
+
+nhood.df <- data.frame("NhoodIdx"=colnames(nhoods(perinatal.milo)), "Nhood"=seq_len(ncol(nhoods(perinatal.milo))))
+ngroup.df <- data.frame("Nhood"=perinatal.res$Nhood, "NhoodGroup"=perinatal.res$NhoodGroup)
+nhood.df <- merge(nhood.df, ngroup.df, by='Nhood')
+write.table(nhood.df, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_Nhood-NhoodGroup_map.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+n.groups <- length(unique(perinatal.res$NhoodGroup))
+table(perinatal.res$NhoodGroup)
+```
+
+We find 18 nhood groups across the perinatal experiment manifold - this is based on using the number of overlapping cells between nhood pairs as 
+the adjacency matrix for the KNN-graph building and Louvain clustering.
+
+```{r, warning=FALSE, message=FALSE, , fig.height=5.25, fig.width=6.95}
+samp.cols <- colorRampPalette(pal_d3("category20")(20))(n.groups)
+names(samp.cols) <- unique(perinatal.res$NhoodGroup)
+
+plotNhoodGroups(perinatal.milo, perinatal.res, layout='FR') +
+    guides(fill=guide_legend(ncol=2, title="NhoodGroup",
+                             override.aes=list(size=4, shape=22))) +
+    scale_fill_manual(values=samp.cols) +
+    NULL
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_ZsGreen-NhoodGroups.png",
+           height=5.25, width=6.95)
+```
+
+```{r, warning=FALSE, message=FALSE, , fig.height=5.25, fig.width=6.95}
+plotNhoodGroups(perinatal.milo, perinatal.res, layout='UMAP') +
+    guides(fill=guide_legend(ncol=2, title="NhoodGroup",
+                             override.aes=list(size=4, shape=22))) +
+    scale_fill_manual(values=samp.cols) +
+    NULL
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_ZsGreen-NhoodGroups.png",
+           height=5.25, width=6.95)
+```
+
+```{r}
+# add these nhood groups to the sorting fraction-specific results
+zsg.milo.compare.merge <- merge(zsg.milo.compare, perinatal.res[, c("Nhood", "NhoodGroup")], by='Nhood')
+```
+
+We can now facet the comparison plot by these nhood groups.
+
+```{r, fig.height=8.25, fig.width=12.75}
+ggplot(zsg.milo.compare.merge, aes(x=ZsGpos.logFC, ZsGneg.logFC, colour=Direction)) +
+    geom_vline(xintercept=0, lty=2, col='grey80') +
+    geom_hline(yintercept=0, lty=2, col='grey80') +
+    geom_point() +
+    theme_cowplot() +
+    scale_colour_manual(values=da.cols) +
+    labs(x="ZsG+ logFC", y="ZsG- logFC") +
+    guides(colour=guide_legend(title="DA direction", override.aes=list(size=3, shape=15))) +
+    facet_wrap(~NhoodGroup) +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_DA_ZsGneg-vs-ZsGpos_NhoodGroupFacet-scatter.png",
+       height=8.25, width=12.75, bg='white', dpi=300)
+```
+
+There aren't many discordant DA nhoods. We can only really interpret these results in light of what each of these nhood groups represent in terms of 
+TEC states.
+
+```{r}
+perinatal.group.markers <- findNhoodGroupMarkers(perinatal.milo, da.res=perinatal.res,
+                                                 aggregate.samples=TRUE, sample_col="HTO")
+
+write.table(perinatal.group.markers, file="~/Dropbox/AgeingExperiment/Newborn/Perinatal_NhoodGroup_Markers.tsv",
+            row.names=FALSE, sep="\t", quote=FALSE)
+```
+
+We need the marker genes for theses neighbourhood groups - we can do this using `findNhoodGroupMarkers` that does a 1 vs. all differential gene 
+expression analysis for each nhood. It pseudobulks the gene expression over the single cells in each nhood group for each experimental sample. This 
+avoids the trap of using single-cells as pseudo-replicates, which leads to an inflated type I error in these types of analyses.
+
+```{r, warning=FALSE, message=FALSE}
+biomaRt.connection <- useMart("ensembl", "mmusculus_gene_ensembl")
+
+gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name"),
+                 mart=biomaRt.connection)
+rownames(gene.df) <- gene.df$ensembl_gene_id
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=7.95}
+nhood.groups <- unique(perinatal.res$NhoodGroup)
+
+top.gene.list <- list()
+for(x in seq_along(nhood.groups)){
+    x.group <- nhood.groups[x]
+    x.genes <- perinatal.group.markers[perinatal.group.markers[, paste0("adj.P.Val_", x.group)] < 0.1, ]
+    x.top.genes <- x.genes$GeneID[order(x.genes[, paste0("logFC_", x.group)], decreasing=TRUE)][1:10]
+    top.gene.list[[x.group]] <- x.top.genes
+}
+
+hm.genes <- Reduce(x=top.gene.list, f=union)
+# take the genes that are only DGE in a specific nhood group
+specific.genes <- sapply(seq_along(top.gene.list), FUN=function(X){
+    x.genes <- top.gene.list[[X]]
+    x.notgenes <- unlist(top.gene.list[setdiff(seq_along(top.gene.list), X)])
+    setdiff(x.genes, x.notgenes)
+})
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=13.15, fig.width=9.15}
+ht_opt$message = FALSE
+
+hm.exprs <- nhoodExpression(perinatal.milo)[unlist(specific.genes), ]
+row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
+row.order <- row.order[!is.na(row.order)]
+rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
+
+# hm.exprs <- hm.exprs[!is.na(rownames(hm.exprs)), ]
+# hm.exprs <- hm.exprs[rowMeans(hm.exprs) > 0.5, ]
+# row scale the hm matrix
+# hm.exprs <- t(apply(hm.exprs, 1, scale))
+
+hm.cols <- viridis(n=20, option='magma')
+
+annot.df <- data.frame("Nhood"=perinatal.res$Nhood, 
+                       "NhoodGroup"=perinatal.res$NhoodGroup,
+                       "logFC"=perinatal.res$logFC)
+annot.df$logFC[perinatal.res$SpatialFDR < 0.1] <- 0
+annot.df$NhoodGroup <- factor(annot.df$NhoodGroup, levels=c(1:n.groups))
+
+rownames(annot.df) <- annot.df$Nhood
+col.order <- order(annot.df$NhoodGroup, annot.df$logFC)
+
+max.lfc <- abs(max(annot.df$logFC))
+lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
+
+annot.df <- annot.df[, -1]
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
+                               col=list("NhoodGroup"=samp.cols,
+                                        "logFC"=lfc.cols))
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker-ZsGreen-Nhood_heatmap.png",
+    height=13.15, width=9.15, res=300, units="in")
+Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE,  cluster_rows=FALSE,
+        show_column_names=FALSE, cluster_columns=FALSE,
+        top_annotation=col.annot)
+dev.off()
+
+
+Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE, cluster_rows=FALSE,
+        show_column_names=FALSE, cluster_columns=FALSE,
+        top_annotation=col.annot)
+```
+
+With these genes, and a few other canonical markers, we can assign broad TEC state labels to these nhood groups.
+
+```{r, warning=FALSE, message=FALSE, fig.height=14.15, fig.width=9.15}
+ht_opt$message = FALSE
+
+plus.genes <- c("Ccl21a", "Aire", "Cxcl12", "Psmb11", "Ptprc", "Itgax", "Itgam", "Ikzf2", "Cd40", "Lgr6", "Ly6a", "Ly6d", "Epcam")
+plus.ensembl <- gene.df[gene.df$external_gene_name %in% plus.genes, ]$ensembl_gene_id
+
+hm.exprs <- nhoodExpression(perinatal.milo)[c(plus.ensembl, unlist(specific.genes)), ]
+row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
+row.order <- row.order[!is.na(row.order)]
+rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
+
+# hm.exprs <- hm.exprs[!is.na(rownames(hm.exprs)), ]
+# hm.exprs <- hm.exprs[rowMeans(hm.exprs) > 0.5, ]
+# row scale the hm matrix
+# hm.exprs <- t(apply(hm.exprs, 1, scale))
+
+hm.cols <- viridis(n=20, option='magma')
+
+annot.df <- data.frame("Nhood"=perinatal.res$Nhood, 
+                       "NhoodGroup"=perinatal.res$NhoodGroup,
+                       "logFC"=perinatal.res$logFC)
+annot.df$logFC[perinatal.res$SpatialFDR < 0.1] <- 0
+annot.df$NhoodGroup <- factor(annot.df$NhoodGroup, levels=c(1:n.groups))
+
+rownames(annot.df) <- annot.df$Nhood
+col.order <- order(annot.df$NhoodGroup, annot.df$logFC)
+
+max.lfc <- abs(max(annot.df$logFC))
+lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
+
+annot.df <- annot.df[, -1]
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
+                               col=list("NhoodGroup"=samp.cols,
+                                        "logFC"=lfc.cols))
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker_PLUS-ZsGreen-Nhood_heatmap.png",
+    height=14.15, width=9.15, res=300, units="in")
+Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE,  cluster_rows=FALSE,
+        show_column_names=FALSE, cluster_columns=FALSE,
+        top_annotation=col.annot)
+dev.off()
+
+
+Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE, cluster_rows=FALSE,
+        show_column_names=FALSE, cluster_columns=FALSE,
+        top_annotation=col.annot)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+perinatal.res$Nhood.TEC <- NA
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(1)] <- "Immature cTEC (1)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(2)] <- "Cycling cTEC (2)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(3)] <- "cTEC late (3)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(4)] <- "cTEC early (4)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(5)] <- "mTEC (5)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(6)] <- "Intertypical (6)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(7)] <- "Post-Aire mTEC (7)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(8)] <- "cTEC early (8)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(9)] <- "ILC-like (9)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(10)] <- "Cycling mTEC (10)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(11)] <- "Sca1+ mTEC (11)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(12)] <- "cTEC late (12)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(13)] <- "Intertypical cTEC-biased (13)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(14)] <- "ILC-like (14)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(15)] <- "Cycling Intertypical (15)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(16)] <- "Tuft-like mTEC (16)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(17)] <- "ILC-like (17)"
+perinatal.res$Nhood.TEC[perinatal.res$NhoodGroup %in% c(18)] <- "Aire+ mTEC (18)"
+
+perinatal.res$Nhood.TEC <- factor(perinatal.res$Nhood.TEC,
+                                           levels=c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)",
+                                                    "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", "cTEC early (8)",
+                                                    "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                                                    "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)",
+                                                    "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)"))
+
+
+zsg.milo.compare.merge$Nhood.TEC <- NA
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(1)] <- "Immature cTEC (1)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(2)] <- "Cycling cTEC (2)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(3)] <- "cTEC late (3)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(4)] <- "cTEC early (4)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(5)] <- "mTEC (5)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(6)] <- "Intertypical (6)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(7)] <- "Post-Aire mTEC (7)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(8)] <- "cTEC early (8)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(9)] <- "ILC-like (9)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(10)] <- "Cycling mTEC (10)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(11)] <- "Sca1+ mTEC (11)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(12)] <- "cTEC late (12)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(13)] <- "Intertypical cTEC-biased (13)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(14)] <- "ILC-like (14)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(15)] <- "Cycling Intertypical (15)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(16)] <- "Tuft-like mTEC (16)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(17)] <- "ILC-like (17)"
+zsg.milo.compare.merge$Nhood.TEC[zsg.milo.compare.merge$NhoodGroup %in% c(18)] <- "Aire+ mTEC (18)"
+
+zsg.milo.compare.merge$Nhood.TEC <- factor(zsg.milo.compare.merge$Nhood.TEC,
+                                           levels=c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)",
+                                                    "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", "cTEC early (8)",
+                                                    "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                                                    "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)",
+                                                    "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)"))
+
+write.table(zsg.milo.compare.merge,
+            file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res-ZsGCompare.txt",
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+I've labelled some cells as `ILC-like` - this is based on the sharing of a suite of gene markers with similar populations in Kernfeld _et al_, 
+where they identified similar cells in the fetal thymus. These annotations are supported by the expression of _Ptprc_, and remind somewhat of the 
+enigmatic eTACs that express surface EpCam and Cd45.
+
+```{r, fig.height=8.25, fig.width=12.75}
+ggplot(zsg.milo.compare.merge, aes(x=ZsGpos.logFC, ZsGneg.logFC, colour=Direction)) +
+    geom_vline(xintercept=0, lty=2, col='grey80') +
+    geom_hline(yintercept=0, lty=2, col='grey80') +
+    geom_point() +
+    theme_cowplot() +
+    scale_colour_manual(values=da.cols) +
+    labs(x="ZsG+ logFC", y="ZsG- logFC") +
+    guides(colour=guide_legend(title="DA direction", override.aes=list(size=3, shape=15))) +
+    facet_wrap(~Nhood.TEC) +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_DA_ZsGneg-vs-ZsGpos_NhoodGroupAnnotFacet-scatter.png",
+       height=8.25, width=12.75, bg='white', dpi=300)
+```
+
+From this analysis we can see that ZsG+ cells accumulate in the Aire+ mTEC, which might indicate the source of ZsGreen signal in the mTEC due to 
+promiscuous gene expression (pGE). There is a general enrichment of cells (i.e. ZsG+ and ZsG- fractions), in the cTEC late (hence the name) and 
+cTEC-biased Intertypical TEC nhoods. Concomitantly, there is a depletion in the cycling and early cTEC nhoods.
+
+Immature cTEC accumulate modestly in the ZsG+ fraction which indicates that they are _downstream_ of a $\beta$5t+ progenitor cell. The cycling mTEC 
+are enriched specifically in the ZsG- fraction, which indicates that they either arise from a $\beta$5t- progenitor, or arose _before_ the dox 
+treatment.  There is both enrichment and depletion of mTEC in the ZsG+ fraction, which muddies the picture somewhat, however, there is a small subset 
+that are enriched in the ZsG- fraction, which would indicate mTEC arise from either a $\beta$5t+ or - progenitor, or that this small enclave of 
+mTEC pre-date the dox treatment.
+
+The Intertypical TEC is where things get messy - and this is where we expect most of the interesting progenitors to sit. There's nothing clear-cut 
+here, so I will have to perform a sub-analysis on just these nhood cells.
+
+We could visualise the relative changes in LFC between the ZsG+ and ZsG- fractions - this might be a little clearer than staring at scatter plots.
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.2, fig.width=6.95}
+zsg.milo.compare.merge$LFC.Ratio <- log(exp(zsg.milo.compare.merge$ZsGpos.logFC)/exp(zsg.milo.compare.merge$ZsGneg.logFC))
+zsg.milo.compare.merge$TEC.Label <- gsub(zsg.milo.compare.merge$Nhood.TEC, pattern="\\([0-9]+\\)", replacement="")
+
+ggplot(zsg.milo.compare.merge, aes(x=TEC.Label, y=LFC.Ratio)) +
+    geom_hline(yintercept=0, lty=2, colour='black') +
+    geom_boxplot(width=0.5, outlier.size=0.5, fill='grey') +
+    theme_cowplot() +
+    theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+    scale_y_continuous(oob=squish, limits=c(-5, 5)) +
+    coord_flip() +
+    labs(x="TEC Group", y="Log Fold Change Ratio") +
+    annotate("text", y=-3, x=15, label="ZsG+ < ZsG-", fontface="bold", size=5, label.padding=3, vjust="inward") +
+    annotate("text", y=3, x=15, label="ZsG+ > ZsG-", fontface="bold", size=5, label.padding=3, vjust="inward") +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ZsGRatio-boxplot.png",
+       height=4.2, width=6.95, dpi=300, bg='white')
+```
+
+The LFC ratio is quite informative as it shows us where the relative accumulation of cells is in each fraction over time.
+
+Labelled nhood group UMAP - need to add TEC labels to the single cells first.
+
+```{r}
+nhood.group.df <- perinatal.res[, c("Nhood", "NhoodGroup")]
+nhood.group.df$NhoodIdx <- colnames(nhoods(perinatal.milo))
+nhood.group.df$NhoodLabel <- NA
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(1)] <- "Immature cTEC (1)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(2)] <- "Cycling cTEC (2)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(3)] <- "cTEC late (3)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(4)] <- "cTEC early (4)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(5)] <- "mTEC (5)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(6)] <- "Intertypical (6)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(7)] <- "Post-Aire mTEC (7)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(8)] <- "cTEC early (8)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(9)] <- "ILC-like (9)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(10)] <- "Cycling mTEC (10)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(11)] <- "Sca1+ mTEC (11)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(12)] <- "cTEC late (12)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(13)] <- "Intertypical cTEC-biased (13)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(14)] <- "ILC-like (14)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(15)] <- "Cycling Intertypical (15)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(16)] <- "Tuft-like mTEC (16)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(17)] <- "ILC-like (17)"
+nhood.group.df$NhoodLabel[nhood.group.df$NhoodGroup %in% c(18)] <- "Aire+ mTEC (18)"
+```
+ 
+
+```{r, warning=FALSE, message=FALSE}
+# first assign each cell to it's nhood(s)
+cell.to.nhood <- do.call(rbind.data.frame, lapply(apply(nhoods(perinatal.milo), 1,
+                                                        FUN=function(NX){
+                                                            colnames(nhoods(perinatal.milo))[NX > 0]
+                                                            }),
+                                                  FUN=function(CN) paste(CN, collapse=",")))
+colnames(cell.to.nhood) <- c("Nhoods")
+cell.to.nhood$CellID <- colnames(perinatal.milo)
+
+# add the nhood group(s)
+cell.to.nhgroup <- data.frame("CellID"=cell.to.nhood$CellID, 
+                              "NhoodGroup"=apply(cell.to.nhood, 1,
+                                                 FUN=function(CX){
+                                                     paste(unique(nhood.group.df[nhood.group.df$NhoodIdx %in% 
+                                                                                     unlist(strsplit(CX["Nhoods"], split=",", fixed=TRUE)),]$NhoodGroup),
+                                                           collapse=",")      }),
+                              "NhoodLabel"=apply(cell.to.nhood, 1,
+                                                 FUN=function(CX){
+                                                     paste(unique(nhood.group.df[nhood.group.df$NhoodIdx %in% 
+                                                                                     unlist(strsplit(CX["Nhoods"], split=",",
+                                                                                                     fixed=TRUE)),]$NhoodLabel),
+                                                           collapse=",")      }))
+```
+
+I've assigned each cell to it's nhoods, nhood groups and TEC labels. Next I will resolve the cells which fall into multiple TEC groups. To do this,
+I will find the cells assigned to multiple groups and look at their nearest neighbours. If they are mostly assigned to a single group/label I will assign 
+the cell to this group/label.
+
+```{r, warning=FALSE, message=FALSE}
+cell.to.nhgroup$NLabels <- apply(cell.to.nhgroup, 1, FUN=function(LX){
+    length(unlist(strsplit(LX["NhoodLabel"], split=",", fixed=TRUE)))
+    })
+
+non.unique.cells <- cell.to.nhgroup$CellID[cell.to.nhgroup$NLabels > 1]
+non.unique.nn <- findKNN(reducedDim(perinatal.milo, "PCA"), k=perinatal.milo@.k,
+                         get.distance=FALSE,
+                         subset=which(colnames(perinatal.milo) %in% non.unique.cells))$index # should this be the same as the original graph/nhood definitions?
+rownames(non.unique.nn) <- non.unique.cells
+
+non.unique.labels <- list()
+for(x in seq_along(non.unique.cells)){
+    x.cell <- non.unique.cells[x]
+    x.nn <- colnames(perinatal.milo)[non.unique.nn[x.cell, ]]
+    x.tab <- table(cell.to.nhgroup[cell.to.nhgroup$CellID %in% x.nn & cell.to.nhgroup$NLabels == 1, ]$NhoodLabel)
+    x.max <- names(x.tab)[which(x.tab == max(x.tab))]
+    if(length(x.max) == 1){
+        non.unique.labels[[x.cell]] <- x.max
+    } else{
+        non.unique.labels[[x.cell]] <- NA # if there is no unique value
+    }
+}
+non.unique.df <- do.call(rbind.data.frame, non.unique.labels)
+colnames(non.unique.df) <- ("UniqueLabel")
+non.unique.df$CellID <- non.unique.cells
+
+# less than 10% get an NA, that's not bad.
+rownames(cell.to.nhgroup) <- cell.to.nhgroup$CellID
+cell.to.nhgroup$UniqueLabel <- cell.to.nhgroup$NhoodLabel
+cell.to.nhgroup$UniqueLabel[cell.to.nhgroup$NLabels > 1] <- NA
+cell.to.nhgroup[non.unique.df$CellID, ]$UniqueLabel <- non.unique.df$UniqueLabel
+cell.to.nhgroup <- cell.to.nhgroup[cell.to.nhgroup$UniqueLabel != "", ]
+
+# merge with the meta-data
+cell.to.nhgroup <- merge(cell.to.nhgroup, perinatal.umap.merge[, c("SortType", "CellID", "Replicate")], by='CellID')
+cell.to.nhgroup$ZsGLabel <- paste(cell.to.nhgroup$UniqueLabel, cell.to.nhgroup$SortType, sep="_")
+```
+
+
+```{r}
+# annotate the single cells
+rownames(cell.to.nhgroup) <- cell.to.nhgroup$CellID
+colData(perinatal.milo)$Nhood.TEC <- cell.to.nhgroup[colnames(perinatal.milo), ]$UniqueLabel
+colData(perinatal.milo)$Nhood.TEC <- factor(colData(perinatal.milo)$Nhood.TEC,
+                                            levels=c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)",
+                                                     "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", "cTEC early (8)",
+                                                     "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                                                     "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)",
+                                                     "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)"))
+
+nhoodlabel.cols <- samp.cols
+names(nhoodlabel.cols) <- c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)", "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", 
+                            "cTEC early (8)", "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                            "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)", "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)")
+
+```
+
+
+```{r, warning=FALSE, message=FALSE, , fig.height=5.25, fig.width=9.95}
+plotNhoodGraph(perinatal.milo, layout='UMAP', colour_by='Nhood.TEC') +
+    guides(fill=guide_legend(ncol=2, title="Nhood.TEC", order=3, 
+                             direction="vertical", box="horizontal",
+                             override.aes=list(size=4, shape=22)),
+           edge_width=guide_legend(ncol=2, order=1, box="horizontal", direction="horizontal"),
+           size=guide_legend(ncol=2, order=2, box="horizontal", direction="horizontal")) +
+    scale_fill_manual(values=nhoodlabel.cols) +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_ZsGreen-NhoodGroupLabels.png",
+           height=5.25, width=9.95)
+```
+
+We should also have a heatmap showing the marker genes for these different annotations. I'll cut down the number of genes to plot as well.
+
+```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=7.95}
+nhood.groups <- unique(perinatal.res$NhoodGroup)
+
+top.gene.list <- list()
+for(x in seq_along(nhood.groups)){
+    x.group <- nhood.groups[x]
+    x.genes <- perinatal.group.markers[perinatal.group.markers[, paste0("adj.P.Val_", x.group)] < 0.1, ]
+    x.top.genes <- x.genes$GeneID[order(x.genes[, paste0("logFC_", x.group)], decreasing=TRUE)][1:7]
+    top.gene.list[[x.group]] <- x.top.genes
+}
+
+hm.genes <- Reduce(x=top.gene.list, f=union)
+# take the genes that are only DGE in a specific nhood group
+specific.genes <- sapply(seq_along(top.gene.list), FUN=function(X){
+    x.genes <- top.gene.list[[X]]
+    x.notgenes <- unlist(top.gene.list[setdiff(seq_along(top.gene.list), X)])
+    setdiff(x.genes, x.notgenes)
+})
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=9.15, fig.width=13.15}
+ht_opt$message = FALSE
+add.genes <- gene.df[gene.df$external_gene_name %in% c("Aire", "Ccl21a", "Psmb11", "Cd52", "Foxn1", "Cd177", "Fut1", "Enpep"), ]$ensembl_gene_id
+
+hm.exprs <- nhoodExpression(perinatal.milo)[unique(c(add.genes, unlist(specific.genes))), ]
+row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
+row.order <- row.order[!is.na(row.order)]
+rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
+
+# hm.exprs <- hm.exprs[!is.na(rownames(hm.exprs)), ]
+# hm.exprs <- hm.exprs[rowMeans(hm.exprs) > 0.5, ]
+# row scale the hm matrix
+# hm.exprs <- t(apply(hm.exprs, 1, scale))
+
+hm.cols <- viridis(n=20, option='magma')
+
+annot.df <- data.frame("TEC.Group"=perinatal.res$Nhood.TEC,
+                       "NhoodGroup"=perinatal.res$NhoodGroup,
+                       "Nhood"=perinatal.res$Nhood,
+                       "logFC"=perinatal.res$logFC)
+annot.df$logFC[perinatal.res$SpatialFDR < 0.1] <- 0
+annot.df$TEC.Group <- factor(annot.df$TEC.Group, levels=levels(colData(perinatal.milo)$Nhood.TEC))
+
+rownames(annot.df) <- annot.df$Nhood
+col.order <- order(annot.df$TEC.Group, annot.df$logFC)
+# col.order <- order(annot.df$Nhood.TEC)
+
+max.lfc <- abs(max(annot.df$logFC))
+lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
+
+annot.df <- annot.df[, !colnames(annot.df) %in% c("Nhood","NhoodGroup")]
+col.annot <- rowAnnotation(df=annot.df[col.order, ],
+                           col=list("TEC.Group"=nhoodlabel.cols,
+                                    "logFC"=lfc.cols))
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker-ZsGreen-NhoodLabel_heatmap.png",
+    height=9.15, width=13.15, res=300, units="in")
+Heatmap(t(hm.exprs[row.order, col.order]), col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE, cluster_rows=FALSE,
+        show_row_names = FALSE,
+        show_column_names=TRUE, cluster_columns=TRUE,
+        left_annotation=col.annot)
+dev.off()
+
+
+Heatmap(t(hm.exprs[row.order, col.order]), col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE, cluster_rows=FALSE,
+        show_row_names = FALSE,
+        show_column_names=TRUE, cluster_columns=TRUE,
+        left_annotation=col.annot)
+```
+
+
+
+Finally, let's take a look at the CITE-seq Ab expression profiles over nhoods, and in particular in our annotated nhood groups.
+
+```{r, warning=FALSE, message=FALSE}
+cite.counts <- as.matrix(perinatal.protein.df[, c("Ly6A", "CD86", "MHCI", "CD24")])
+rownames(cite.counts) <- perinatal.protein.df$CellID
+
+cite.agg <- (t(cite.counts) %*% nhoods(perinatal.milo)[rownames(cite.counts), ])
+cite.exprs <- as.data.frame(apply(cite.agg, 1, FUN=function(PX) PX/colSums(nhoods(perinatal.milo)[rownames(cite.counts), ])))
+cite.exprs$Nhood <- seq_along(rownames(cite.exprs[as.character(unlist(nhoodIndex(perinatal.milo))), ]))
+
+milo.cite.merge <- merge(zsg.milo.compare.merge, cite.exprs, by='Nhood')
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=2.9, fig.width=10.8}
+ggplot(milo.cite.merge, aes(x=Nhood.TEC, y=Ly6A, fill=Nhood.TEC)) +
+    geom_boxplot() +
+    theme_cowplot() +
+    # theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+    theme(axis.text.x = element_blank()) +
+    expand_limits(y=c(0)) +
+    scale_fill_manual(values=nhoodlabel.cols) +
+    guides(fill=guide_legend(title="TEC Group", ncol=2)) +
+    labs(x="TEC Group", y="log CPM - Sca1 CITE") +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_TECGroup_CITE-Sca1-boxplot.png",
+       height=2.9, width=10.8, dpi=300, bg='white')
+```
+
+This shows the expression of Sca1+ protein levels, as measured by CITE-seq. We can see that there are multiple Sca1+ populations, including some 
+of the ILC-like cells.
+
+```{r, warning=FALSE, message=FALSE, fig.height=2.9, fig.width=10.8}
+ggplot(milo.cite.merge, aes(x=Nhood.TEC, y=MHCI, fill=Nhood.TEC)) +
+   geom_boxplot() +
+    theme_cowplot() +
+    # theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+    theme(axis.text.x = element_blank()) +
+    expand_limits(y=c(0)) +
+    scale_fill_manual(values=nhoodlabel.cols) +
+    guides(fill=guide_legend(title="TEC Group", ncol=2)) +
+    labs(x="TEC Group", y="log CPM - MHCII CITE") +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_TECGroup_CITE-MHCII-boxplot.png",
+       height=2.9, width=10.8, dpi=300, bg='white')
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=2.9, fig.width=10.8}
+ggplot(milo.cite.merge, aes(x=Nhood.TEC, y=CD24, fill=Nhood.TEC)) +
+    geom_boxplot() +
+    theme_cowplot() +
+    # theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+    theme(axis.text.x = element_blank()) +
+    expand_limits(y=c(0)) +
+    scale_fill_manual(values=nhoodlabel.cols) +
+    guides(fill=guide_legend(title="TEC Group", ncol=2)) +
+    labs(x="TEC Group", y="log CPM - Cd24 CITE") +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_TECGroup_CITE-Cd24-boxplot.png",
+       height=2.9, width=10.8, dpi=300, bg='white')
+```
+
+I think the Sca1+ mTEC might be a recently described mTEC population that is consistent with a keratinised post-Aire phenotype. If this is the 
+case, then these cells might also be enriched in the ZsG+ fraction.
+
+```{r, warning=FALSE, message=FALSE, fig.height=2.9, fig.width=10.8}
+ggplot(milo.cite.merge, aes(x=Nhood.TEC, y=CD86, fill=Nhood.TEC)) +
+    geom_boxplot() +
+    theme_cowplot() +
+    # theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+    theme(axis.text.x = element_blank()) +
+    expand_limits(y=c(0)) +
+    scale_fill_manual(values=nhoodlabel.cols) +
+    guides(fill=guide_legend(title="TEC Group", ncol=2)) +
+    labs(x="TEC Group", y="log CPM - Cd86 CITE") +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_TECGroup_CITE-Cd86-boxplot.png",
+       height=2.9, width=10.8, dpi=300, bg='white')
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.width=6.95, fig.height=5.95}
+zsg.milo.res <- merge(perinatal.res.sort, zsg.milo.compare.merge[, c("Nhood", "NhoodGroup", "Nhood.TEC")], by='Nhood')
+
+plotDAbeeswarm(zsg.milo.res, group.by='Nhood.TEC', alpha=0.1) +
+    labs(y="Nhood Group - TEC") + 
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/SortType_Beeswarm-NhoodGroupLabels.png",
+       height=5.95, width=6.95, bg='white', dpi=300)
+```
+
+There's a marginal shift in the LFC away from 0 for the Sca1+ mTEC, but it's not strong enough to call them DA. However, what we can see is that 
+the Post-Aire mTEC are enriched in the ZsG+ fraction.
+
+```{r, fig.height=8.95, fig.width=8.95}
+ggplot(milo.cite.merge, aes(x=Ly6A, y=MHCI)) +
+    geom_point() +
+    theme_cowplot() +
+    facet_wrap(~Nhood.TEC) +
+    labs(x="Sca1 CITE", y="MHCII CITE") +
+    NULL
+```
+
+Hmm - this looks like it could be a normalisation issue - partcularly if the MHCII antibody staining hasn't been optimised. There is basically 
+almost no dynamic range in the MHCII signal.
+
+For the next set of figure panels I will need just the set of Intertypical TEC as these are the best-candidates for the progenitor TEC (pTEC). I 
+will also include the immediate groups of cells that appear to be differentiating away from these pTEC to anchor them in a co-ordinate space of 
+cTEC vs mTEC fate.
+
+```{r, warning=FALSE, message=FALSE}
+itec.nhoods <- milo.cite.merge$Nhood[milo.cite.merge$NhoodGroup %in% c(1, 6, 13, 15)]
+itec.cells <- colnames(perinatal.milo)[(rowSums(nhoods(perinatal.milo)[, itec.nhoods]) > 0)]
+
+write.table(itec.cells, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC.txt",
+            quote=FALSE, sep="\t", row.names=FALSE, col.names=FALSE)
+```
+
+
+## Cellrank analysis
+
+I have run cellrank on the full data set - how do the results compare to my cluster annotation, and do these indicate directionality from intertypical TEC to other TEC groups?
+
+```{r, warning=FALSE}
+crank.df <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_CellRank.tsv",
+                       sep="\t", header=TRUE, stringsAsFactors = FALSE)
+crank.df$CellID <- gsub(gsub(crank.df$CellID, pattern=":", replacement="_"), pattern="x", replacement="-1")
+
+# merge
+meta.crank.merge <- merge(perinatal.umap.merge, crank.df, by='CellID')
+table("Graph"=meta.crank.merge$Graph.Cluster, "Ledien"=meta.crank.merge$leiden)
+```
+
+These _mostly_ agree, so using the Leiden clustering as the macrostates should be fine.
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=terminal_states_probs), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        # guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+Hmm, Cellrank seems to think most clusters are terminal states...I'm not sure that's quite correct.
+
+```{r, warning=FALSE, message=FALSE}
+n.leiden <- length(unique(meta.crank.merge$leiden)) # leiden starts at 0
+leiden.cols <- colorRampPalette(pal_d3("category20")(20))(n.leiden)
+names(leiden.cols) <- as.character(unique(meta.crank.merge$leiden))
+all.leiden <- as.character(unique(meta.crank.merge$leiden))
+
+# compute the median UMAP position for each cluster
+txt.df <- data.frame("UMAP1"=sapply(seq_along(all.leiden), FUN=function(U1) median(meta.crank.merge$UMAP1[meta.crank.merge$leiden == U1])),
+                     "UMAP2"=sapply(seq_along(all.leiden), FUN=function(U2) median(meta.crank.merge$UMAP2[meta.crank.merge$leiden == U2])),
+                     "leiden"=all.leiden)
+
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=as.character(leiden)), pointsize=0.75) +
+    geom_label(data=txt.df, aes(label=leiden), colour='black') +
+        # scale_colour_viridis() +
+    scale_colour_manual(values=leiden.cols) +
+        theme_cowplot() +
+        guides(colour=guide_legend(title="Leiden", override.aes = list(size=3))) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+The leiden clustering is _very_ granular, so the macrostates _might_ be believable. Cellrank thinks the macrostates are clusters 4, 8, 10, 22, 27 and 29.
+
+```{r, warning=FALSE, message=FALSE, fig.height=14, fig.width=14}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=as.character(leiden)), pointsize=0.75) +
+        # scale_colour_viridis() +
+    scale_colour_manual(values=leiden.cols) +
+        theme_cowplot() +
+        guides(colour=guide_legend(title="Leiden", override.aes = list(size=3))) +
+        facet_wrap(~leiden) +
+        NULL
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=AbsorpProbs4), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        # guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+I'm not convinced by cluster 4. I'm showing the log absorption probability into cluster 4 (which is the tip of )
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=exp(AbsorpProbs8)), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        # guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+Cluster 8 are the LHS intertypical TEC. I've plotted the exponent to see where the differences might be. It looks like the probabilies radiate out from this cluster towards 
+both the mTEC and cTEC lineages.
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=AbsorpProbs10), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        # guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+Cluster 10 is the top right hand corner of the mature cTEC. It doesn't look very informative.
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=AbsorpProbs22), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        # guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+Cluster 22 are the proliferating cTEC.
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=AbsorpProbs27), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        # guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+Cluster 27 is the little tip of post-Aire mTEC at the bottom.
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(meta.crank.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+        geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")], colour='grey80') +
+        geom_scattermore(aes(colour=terminal_states_probs), pointsize=0.75) +
+        scale_colour_viridis() +
+        theme_cowplot() +
+        # guides(colour=guide_colourbar(title=gtitle)) +
+        # facet_wrap(~SortType) +
+        NULL
+```
+
+
+## Cell-cell communication analysis
+
+I think we need a bit of differential cross-talk analysis to see if any of the other TEC populations might be interacting with our putative progenitors. For this I am using the 
+`CellChat` package.
+
+```{r, warning=FALSE, message=FALSE}
+# annotate cells with TEC states
+perinatal.meta <- as.data.frame(colData(perinatal.milo))
+rownames(perinatal.meta) <- colnames(perinatal.milo)
+perinatal.res$TEC.Label <- trimws(gsub(perinatal.res$Nhood.TEC, pattern="\\([0-9]+\\)", replacement=""), "right")
+nhood.groups <- unique(perinatal.res$TEC.Label)
+
+perinatal.meta$TEC.Label <- NA
+multiple.labels <- c() # deal with these after
+for(x in seq_along(nhood.groups)){
+  x.tec <- nhood.groups[x]
+  x.nhoods <- unique(perinatal.res$Nhood[perinatal.res$TEC.Label %in% x.tec])
+  x.cells <- colnames(perinatal.milo)[rowSums(nhoods(perinatal.milo)[, x.nhoods, drop=FALSE]) > 0]
+  multiple.labels <- unique(c(multiple.labels, rownames(perinatal.meta[x.cells, ])[which(!is.na(perinatal.meta[x.cells, ]$TEC.Label))]))
+  perinatal.meta[setdiff(x.cells, multiple.labels), ]$TEC.Label <- x.tec
+}
+
+perinatal.meta[multiple.labels, ]$TEC.Label <- NA
+to.label <- rownames(perinatal.meta[is.na(perinatal.meta$TEC.Label), ])
+
+# for the multple labelled cells take the majority vote across all their neighbours
+for(i in seq_along(to.label)){
+  i.cell <- to.label[i]
+  i.idx <- which(colnames(perinatal.milo) %in% i.cell)
+  i.neighbours <- neighbors(miloR::graph(perinatal.milo), i.idx)
+  i.tab <- table(perinatal.meta[colnames(perinatal.milo)[i.neighbours], ]$TEC.Label)
+  i.max <- names(i.tab)[which(i.tab == max(i.tab))]
+  
+  if(length(i.max) > 1){
+    i.max <- sample(i.max, 1)
+  }
+  
+  perinatal.meta[i.cell, ]$TEC.Label <- i.max
+}
+```
+
+All TEC are now labelled.
+
+```{r}
+# create the cell chat object from the milo object
+colData(perinatal.milo)$TEC.Label <- perinatal.meta[colnames(perinatal.milo), ]$TEC.Label
+chat.milo <- perinatal.milo
+sink(file="/dev/null")
+rm(list=c("perinatal.milo"))
+gc()
+sink(file=NULL)
+# need to filter out a couple of problematic genes
+rowData(chat.milo) <- gene.df[rownames(chat.milo), ]
+chat.milo <- chat.milo[!duplicated(rowData(chat.milo)$external_gene_name), ]
+chat.milo <- chat.milo[!is.na(rowData(chat.milo)$external_gene_name), ]
+rownames(chat.milo) <- rowData(chat.milo)$external_gene_name
+perinatal.chat <- createCellChat(chat.milo, group.by='TEC.Label')
+```
+
+```{r}
+CellChatDB <- CellChatDB.mouse # use CellChatDB.mouse if running on mouse data
+
+# add this DB
+gene.info <- CellChatDB$geneInfo
+interact.db <- CellChatDB$interaction
+interact.db <- interact.db[!interact.db$ligand %in% c("H2-BI", "H2-Ea-ps"), ]
+CellChatDB$interaction <- interact.db
+perinatal.chat@DB <- CellChatDB
+
+perinatal.chat <- subsetData(perinatal.chat) # subset to just the ligand-receptor pairs of genes
+perinatal.chat <- identifyOverExpressedGenes(perinatal.chat)
+perinatal.chat <- identifyOverExpressedInteractions(perinatal.chat)
+```
+
+Now compute the communication probability.
+
+```{r}
+perinatal.chat <- computeCommunProb(perinatal.chat) # use the default method for averaging gene expression - trimean(?!)
+perinatal.chat <- filterCommunication(perinatal.chat, min.cells=10) # fitler interactions involving fewer than 10 cells
+```
+
+```{r}
+perinatal.chat <- computeCommunProbPathway(perinatal.chat) # infer communication at pathway level
+perinatal.chat <- aggregateNet(perinatal.chat) # aggregate signalling between cell types in a network
+```
+
+We can visualise the aggregated communication network as a circos plot.
+
+```{r}
+groupSize <- as.numeric(table(perinatal.chat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(perinatal.chat@net$count, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Number of interactions")
+netVisual_circle(perinatal.chat@net$weight, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Interaction weights/strength")
+```
+
+These interactions look very dense. It's hard to see if there is a specific population that act as a hub. We can visualise this instead from each separate 
+TEC state to all others.
+
+```{r, fig.height=9, warning=FALSE}
+mat <- perinatal.chat@net$weight
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = TRUE, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+This really does make it look like a free-for-all! Though interestingly, the intertypical and immature cells tend to have stronger inferred interactions...
+
+As we have identified _Lgr6_ as a marker of Ly6d+ Intertypical TEC, I shall focus on R-spon-Lgr interations, along with Wnt, BMP and TGF-beta as these are important for TEC renewal.
+
+### BMP
+
+```{r}
+pathways.show <- c("BMP") 
+par(mfrow=c(1,1))
+netVisual_heatmap(perinatal.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(perinatal.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=15}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(perinatal.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+mTEC seem to produce Bmp2, while cTEC produce Bmp7 - now that _is_ interesting.
+
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+perinatal.chat <- netAnalysis_computeCentrality(perinatal.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(perinatal.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of BMP signalling - cTEC tend to be the receivers and mTEC-primed intertypical TEC tend to be senders.
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(perinatal.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(perinatal.chat, signaling = c("BMP"))
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+### WNT
+
+```{r}
+pathways.show <- c("WNT") 
+par(mfrow=c(1,1))
+netVisual_heatmap(perinatal.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+WNT signalling doesn't look particularly discriminatory.
+
+```{r}
+netAnalysis_contribution(perinatal.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=9, fig.width=14}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(perinatal.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+This looks like the Immature mTEC communicate specifically through Wnt10a/b and Wnt4 with most other cell types, while the Ly6d+ Intertypical TEC and mTEC-primed Intertypical TEC 
+specifically interaction via Wnt10a. Interestingly, they are only interacting with other mTEC-biased/lineage TEC states via Lrp5, but all TEC states via Lrp6. I'll need to look at 
+the expression patterns of these ligands and receptors more closely.
+
+```{r, warning=FALSE, message=FALSE, fig.height=8, fig.width=8}
+plotGeneExpression(perinatal.chat, signaling = "WNT")
+```
+This demonstrates very nicely that the Immature mTEC and Ly6d+ Intertypical TEC express Wnt10a, which can then interaction with all other TEC states via Lrp6. What does Wnt signalling do in the 
+thymus exactly?
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+perinatal.chat <- netAnalysis_computeCentrality(perinatal.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(perinatal.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(perinatal.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(perinatal.chat, signaling = c("WNT"))
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+cTEC are both senders and receivers while Immature mTEC tend to be senders of Wnt signals.
+
+### ncWNT
+
+```{r}
+pathways.show <- c("ncWNT") 
+par(mfrow=c(1,1))
+netVisual_heatmap(perinatal.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions? This looks rather interesting for non-canonical Wnt signalling; Ly6d- intertypical TEC are the _only_ senders.
+
+```{r}
+netAnalysis_contribution(perinatal.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(perinatal.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+perinatal.chat <- netAnalysis_computeCentrality(perinatal.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(perinatal.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of non-canonical Wnt signalling - Ly6d- Intertypical TEC are the only seners whith most other TEC states acting as receivers.
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(perinatal.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(perinatal.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+
+### TGFbeta
+
+```{r}
+pathways.show <- c("TGFb") 
+par(mfrow=c(1,1))
+netVisual_heatmap(perinatal.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(perinatal.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(perinatal.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+perinatal.chat <- netAnalysis_computeCentrality(perinatal.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(perinatal.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of TGF-beta signalling - cTEC states tend to be the receivers and mitotic mTEC tend to be senders
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(perinatal.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(perinatal.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+
+### LIFR
+
+```{r}
+pathways.show <- c("LIFR") 
+par(mfrow=c(1,1))
+netVisual_heatmap(perinatal.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(perinatal.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(perinatal.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+perinatal.chat <- netAnalysis_computeCentrality(perinatal.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(perinatal.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of TGF-beta signalling - cTEC states tend to be the receivers and mitotic mTEC tend to be senders
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(perinatal.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(perinatal.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+### NOTCH
+
+```{r}
+pathways.show <- c("NOTCH") 
+par(mfrow=c(1,1))
+netVisual_heatmap(perinatal.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(perinatal.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=6, fig.width=12}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(perinatal.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+perinatal.chat <- netAnalysis_computeCentrality(perinatal.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(perinatal.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of TGF-beta signalling - cTEC states tend to be the receivers and mitotic mTEC tend to be senders
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(perinatal.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(perinatal.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+### TRAIL
+
+```{r}
+pathways.show <- c("TRAIL") 
+par(mfrow=c(1,1))
+netVisual_heatmap(perinatal.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions? This looks rather interesting for non-canonical Wnt signalling; Ly6d- intertypical TEC are the _only_ senders.
+
+```{r}
+netAnalysis_contribution(perinatal.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(perinatal.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+perinatal.chat <- netAnalysis_computeCentrality(perinatal.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(perinatal.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of non-canonical Wnt signalling - Ly6d- Intertypical TEC are the only seners whith most other TEC states acting as receivers.
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(perinatal.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(perinatal.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+
+
+
+
