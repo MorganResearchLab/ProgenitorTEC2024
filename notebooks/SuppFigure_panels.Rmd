@@ -1,0 +1,500 @@
+---
+title: "Thymus progenitor supplementary files - figure 2"
+output: html_notebook
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+This notebook constructs the various supplementary figure panels that correspond to main figure 2.
+
+```{r}
+suppressMessages({
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(ggsci)
+library(cowplot)
+library(ggrepel)
+library(scattermore)
+library(SingleCellExperiment)
+library(scran)
+library(scater)
+library(scuttle)
+library(batchelor)
+library(igraph)
+library(miloR)
+library(reshape2)
+library(dplyr)
+library(biomaRt)
+library(BiocNeighbors)
+library(ggalluvial)
+})
+```
+
+# Single-cell QC
+
+```{r "emptyDrops calling"}
+edrops.df <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/Perinatal_emptyDrops.tsv",
+                        header=FALSE, sep="\t")
+colnames(edrops.df) <- c("InFile", "Droplets")
+edrops.df$SampName <- gsub(edrops.df$InFile, pattern="^(logs/)(Newborn)_(ZsG[a-z]+)_(\\S+Run)_([m|c]TEC)_(HTO-emptyDrops\\.err)",
+                           replacement="\\3_\\4_\\5")
+```
+
+Plot the number of non-empty droplets called by `emptyDrops`.
+
+```{r "emptyDrops plotting", fig.height=4.75, fig.width=6}
+ggplot(edrops.df, aes(x=SampName, y=Droplets)) +
+  geom_bar(stat='identity', colour='grey80', fill='grey80') +
+  geom_text(aes(label=Droplets)) +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  labs(x="Sample ID", y="#non-empty droplets") +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/EmptyDrops-calling-bar.png",
+       height=4.75, width=6, dpi=300, bg='white')
+```
+
+```{r "high mitochondrial expression"}
+# this uses an adaptive threshold based on the distribution of MT RNA expression - specifically cells with a significant departure from the 
+# median absolute deviations after FDR adjustment
+mito.df <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/Perinatal_highMito.tsv",
+                      sep="\t", header=TRUE)
+mito.df$SampName <- gsub(mito.df$InFile, pattern="^(logs/)(Newborn)_(ZsG[a-z]+)_(\\S+Run)_([m|c]TEC)_(HTO-emptyDrops\\.err)",
+                           replacement="\\3_\\4_\\5")
+```
+
+```{r "high mitochondrial QC plotting", fig.height=4.75, fig.width=6}
+ggplot(mito.df, aes(x=SampName, y=high.Mito)) +
+  geom_bar(stat='identity', colour='grey80', fill='grey80') +
+  geom_text(aes(label=high.Mito)) +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  labs(x="Sample ID", y="#high mito. RNA cells") +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/High_mitochondrial_RNA-bar.png",
+       height=4.75, width=6, dpi=300, bg='white')
+```
+
+```{r "doublet calling from HTOs"}
+hto.df <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/HTO_class.tsv",
+                     header=TRUE, sep="\t")
+hto.df$SampName <- gsub(hto.df$ID, pattern="(Newborn)_(ZsG[a-z]+)_(\\S+Run)_([m|c]TEC)_(HTO_[ATCG]+-1)", replacement="\\2_\\3_\\4")
+```
+
+```{r "HTO doublet plotting", fig.height=4.75, fig.width=9}
+# its easier to tabulate and summarise so the numbers can be added
+hto.summ.df <- hto.df %>% group_by(SampName) %>% count(Class) %>% mutate(Prop.HTO=n/sum(n))
+
+ggplot(hto.summ.df, aes(x=SampName, y=Prop.HTO, fill=Class)) +
+  geom_bar(stat='identity', position="dodge") +
+  geom_text(aes(label=round(n, 3), group=Class), position=position_dodge(width=1)) +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  labs(x="Sample ID", y="Proportion in HTO class") +
+  scale_fill_d3() +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/HTO_doublets-bar.png",
+       height=4.75, width=9, dpi=300, bg='white')
+```
+
+# Comparison to Wells *et al.* data
+
+```{r "Ensembl to gene symbol mapping"}
+biomaRt.connection <- useMart("ensembl", "mmusculus_gene_ensembl")
+
+gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name"),
+                 mart=biomaRt.connection)
+rownames(gene.df) <- gene.df$ensembl_gene_id
+```
+
+```{r "loading Wells et al data"}
+all.controls <- read.csv("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/GSE137699_allSamples.csv.gz",
+                         header=TRUE)
+
+all.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/GSE137699_RAW/all_meta.csv",
+                       header=TRUE, sep=",")
+rownames(all.meta) <- all.meta$X
+all.meta$stage[all.meta$stage %in% c("Aire_positive~")] <- "Aire_positive"
+
+keep.cells <- intersect(rownames(all.meta), colnames(all.controls))
+
+wells.sce <- SingleCellExperiment(assays=list(logcounts=as(as.matrix(all.controls[, keep.cells]), "dgCMatrix")), 
+                                  colData=all.meta[keep.cells, ])
+
+aire.iso.sce <- wells.sce[, colData(wells.sce)$exp %in% c("aireTrace", "isoControlBeg", "isoControlEnd")]
+
+symb.to.ensembl <- gene.df[gene.df$external_gene_name %in% rownames(aire.iso.sce), c("external_gene_name", "ensembl_gene_id")]
+symb.to.ensembl <- symb.to.ensembl[!duplicated(symb.to.ensembl$external_gene_name), ]
+symb.to.ensembl <- symb.to.ensembl[!is.na(symb.to.ensembl$external_gene_name), ]
+rownames(symb.to.ensembl) <- symb.to.ensembl$external_gene_name
+
+aire.iso.sce <- aire.iso.sce[rownames(aire.iso.sce) %in% rownames(symb.to.ensembl), ]
+aire.iso.sce <- aire.iso.sce[rownames(symb.to.ensembl) , ]
+rownames(aire.iso.sce) <- symb.to.ensembl$ensembl_gene_id
+```
+
+I'll start with the Aire lineage traced and isotype control samples from
+the antibody blockade experiments.
+
+```{r "Aire-traced and isotype controls dimensionality reduction"}
+set.seed(42)
+aire.iso.hvgs <- modelGeneVar(aire.iso.sce)
+aire.iso.hvgs$FDR[is.na(aire.iso.hvgs$FDR)] <- 1
+
+reducedDim(aire.iso.sce, "PCA") <- multiBatchPCA(aire.iso.sce, subset.row=aire.iso.hvgs$FDR < 0.1, assay.type="logcounts",
+                                                 batch=colData(aire.iso.sce)$exp, d=50, preserve.single=TRUE)[[1]]
+aire.iso.sce <- runUMAP(aire.iso.sce, n_neighbors=21, dimred="PCA", n_dimred=30)
+aire.iso.umap <- data.frame("CellID"=colnames(aire.iso.sce), "UMAP1"=reducedDim(aire.iso.sce, "UMAP")[, 1],
+                            "UMAP2"=reducedDim(aire.iso.sce, "UMAP")[, 2])
+aire.iso.umap <- merge(aire.iso.umap, all.meta, by.x="CellID", by.y="X")
+```
+
+
+```{r "UMAP Aire-traced and isotype controls", fig.height=3.75, fig.width=11}
+by.stage <- ggplot(aire.iso.umap, aes(x=UMAP1, y=UMAP2, colour=stage)) +
+  geom_scattermore(pointsize=1) +
+  theme_cowplot() +
+  scale_colour_d3() +
+  guides(colour=guide_legend(override.aes=list(size=2.5))) +
+  NULL
+
+by.batch <- ggplot(aire.iso.umap, aes(x=UMAP1, y=UMAP2, colour=exp)) +
+  geom_scattermore(pointsize=1) +
+  theme_cowplot() +
+  scale_colour_npg() +
+  guides(colour=guide_legend(override.aes=list(size=2.5))) +
+  NULL
+
+plot_grid(by.stage, by.batch)
+```
+
+These UMAPs have similar structure to those shown in Wells *et al.*
+figure 1, which is encouraging. The next step is to combine these with
+our perinatal TEC data set and cross-compare the cell labels.
+
+```{r "load perinatal data"}
+# derive all of the relevant meta data
+perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+
+colData(perinatal.milo)$SortType <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
+colData(perinatal.milo)$TECSort <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
+colData(perinatal.milo)$Day <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\2")
+colData(perinatal.milo)$Day[colData(perinatal.milo)$Day %in% c("d20")] <- "d2"
+colData(perinatal.milo)$Replicate <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\4")
+
+perinatal.meta <- colData(perinatal.milo)
+perinatal.meta$CellID <- colnames(perinatal.milo)
+perinatal.umap <- data.frame("CellID"=colnames(perinatal.milo), "UMAP1"=reducedDim(perinatal.milo, "UMAP")[, 1],
+                             "UMAP2"=reducedDim(perinatal.milo, "UMAP")[, 2])
+perinatal.meta <- merge(perinatal.meta, perinatal.umap, by='CellID')
+
+milo.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res-ZsGCompare.txt",
+                        sep="\t", header=TRUE)
+milo.meta$NhoodIdx <- colnames(nhoods(perinatal.milo))
+```
+
+```{r, warning=FALSE, message=FALSE}
+# first assign each cell to it's nhood(s)
+cell.to.nhood <- do.call(rbind.data.frame, lapply(apply(nhoods(perinatal.milo), 1,
+                                                        FUN=function(NX){
+                                                            colnames(nhoods(perinatal.milo))[NX > 0]
+                                                            }),
+                                                  FUN=function(CN) paste(CN, collapse=",")))
+colnames(cell.to.nhood) <- c("Nhoods")
+cell.to.nhood$CellID <- colnames(perinatal.milo)
+
+# add the nhood group(s)
+cell.to.nhgroup <- data.frame("CellID"=cell.to.nhood$CellID, 
+                              "NhoodGroup"=apply(cell.to.nhood, 1,
+                                                 FUN=function(CX){
+                                                     paste(unique(milo.meta[milo.meta$NhoodIdx %in% 
+                                                                              unlist(strsplit(CX["Nhoods"], split=",", fixed=TRUE)),]$NhoodGroup),
+                                                           collapse=",")      }),
+                              "NhoodLabel"=apply(cell.to.nhood, 1,
+                                                 FUN=function(CX){
+                                                     paste(unique(milo.meta[milo.meta$NhoodIdx %in% 
+                                                                              unlist(strsplit(CX["Nhoods"], split=",",
+                                                                                              fixed=TRUE)),]$Nhood.TEC),
+                                                           collapse=",")      }))
+```
+
+I've assigned each cell to it's nhoods, nhood groups and TEC labels.
+Next I will resolve the cells which fall into multiple TEC groups. To do
+this, I will find the cells assigned to multiple groups and look at
+their nearest neighbours. If they are mostly assigned to a single
+group/label I will assign the cell to this group/label.
+
+```{r, warning=FALSE, message=FALSE}
+cell.to.nhgroup$NLabels <- apply(cell.to.nhgroup, 1, FUN=function(LX){
+    length(unlist(strsplit(LX["NhoodLabel"], split=",", fixed=TRUE)))
+    })
+
+non.unique.cells <- cell.to.nhgroup$CellID[cell.to.nhgroup$NLabels > 1]
+non.unique.nn <- findKNN(reducedDim(perinatal.milo, "PCA"), k=perinatal.milo@.k,
+                         get.distance=FALSE,
+                         subset=which(colnames(perinatal.milo) %in% non.unique.cells))$index # should this be the same as the original graph/nhood definitions?
+rownames(non.unique.nn) <- non.unique.cells
+
+non.unique.labels <- list()
+for(x in seq_along(non.unique.cells)){
+    x.cell <- non.unique.cells[x]
+    x.nn <- colnames(perinatal.milo)[non.unique.nn[x.cell, ]]
+    x.tab <- table(cell.to.nhgroup[cell.to.nhgroup$CellID %in% x.nn & cell.to.nhgroup$NLabels == 1, ]$NhoodLabel)
+    x.max <- names(x.tab)[which(x.tab == max(x.tab))]
+    if(length(x.max) == 1){
+        non.unique.labels[[x.cell]] <- x.max
+    } else{
+        non.unique.labels[[x.cell]] <- NA # if there is no unique value
+    }
+}
+non.unique.df <- do.call(rbind.data.frame, non.unique.labels)
+colnames(non.unique.df) <- ("UniqueLabel")
+non.unique.df$CellID <- non.unique.cells
+
+# less than 10% get an NA, that's not bad.
+rownames(cell.to.nhgroup) <- cell.to.nhgroup$CellID
+cell.to.nhgroup$UniqueLabel <- cell.to.nhgroup$NhoodLabel
+cell.to.nhgroup$UniqueLabel[cell.to.nhgroup$NLabels > 1] <- NA
+cell.to.nhgroup[non.unique.df$CellID, ]$UniqueLabel <- non.unique.df$UniqueLabel
+cell.to.nhgroup <- cell.to.nhgroup[cell.to.nhgroup$UniqueLabel != "", ]
+
+# merge with the meta-data
+cell.to.nhgroup <- merge(cell.to.nhgroup, perinatal.meta[, c("SortType", "CellID", "Replicate")], by='CellID')
+cell.to.nhgroup$ZsGLabel <- paste(cell.to.nhgroup$UniqueLabel, cell.to.nhgroup$SortType, sep="_")
+```
+
+
+```{r}
+# annotate the single cells
+rownames(cell.to.nhgroup) <- cell.to.nhgroup$CellID
+colData(perinatal.milo)$Nhood.TEC <- cell.to.nhgroup[colnames(perinatal.milo), ]$UniqueLabel
+colData(perinatal.milo)$Nhood.TEC <- factor(colData(perinatal.milo)$Nhood.TEC,
+                                            levels=c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)",
+                                                     "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", "cTEC early (8)",
+                                                     "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                                                     "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)",
+                                                     "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)"))
+
+n.groups <- length(unique(milo.meta$NhoodGroup))
+nhoodlabel.cols <- colorRampPalette(pal_d3("category20")(20))(n.groups)
+
+names(nhoodlabel.cols) <- c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)", "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", 
+                            "cTEC early (8)", "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                            "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)", "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)")
+
+```
+
+We will integrate the data sets using `reducedMNN`.
+
+```{r "shared reduced dimesions on Perinatal and Wells et al data"}
+set.seed(42)
+
+keep.genes <- intersect(rownames(aire.iso.sce), rownames(perinatal.milo))
+joint.sce <- SingleCellExperiment(assays=list(logcounts=do.call(cbind, list(logcounts(perinatal.milo[keep.genes, ]), logcounts(aire.iso.sce[keep.genes, ])))),
+                                              colData=data.frame("Batch"=c(rep("Perinatal", ncol(perinatal.milo)), rep("Wells", ncol(aire.iso.sce)))))
+joint.hvg <- modelGeneVar(joint.sce)
+joint.hvg$FDR[is.na(joint.hvg$FDR)] <- 1
+assay(joint.sce, "Cosine") <- cosineNorm(logcounts(joint.sce), mode="matrix")
+reducedDim(joint.sce, "Cosine.PCA") <- multiBatchPCA(joint.sce, subset.row=joint.hvg$FDR < 0.1, assay.type="Cosine", batch=colData(joint.sce)$Batch, d=50,
+                                                    preserve.single=TRUE)[[1]]
+
+joint.meta <- data.frame("CellID"=colnames(joint.sce), "Batch"=colData(joint.sce)$Batch)
+joint.sce <- runUMAP(joint.sce, n_neighbors=21, dimred="Cosine.PCA", n_dimred=30)
+joint.umap <- data.frame("CellID"=colnames(joint.sce), "UMAP1"=reducedDim(joint.sce, "UMAP")[, 1],
+                            "UMAP2"=reducedDim(joint.sce, "UMAP")[, 2])
+joint.umap <- merge(joint.umap, joint.meta, by="CellID")
+```
+
+Now for the batch integration.
+
+```{r "integrate Perinatal and Wells data"}
+set.seed(42)
+joint.mnn <- reducedMNN(reducedDim(joint.sce, "Cosine.PCA"), batch=colData(joint.sce)$Batch, k=21)
+reducedDim(joint.sce, "Cosine.MNN") <- joint.mnn$corrected
+joint.sce <- runUMAP(joint.sce, n_neighbors=21, dimred="Cosine.MNN", n_dimred=30, name="MNN.UMAP")
+
+joint.mnn.umap <- data.frame("CellID"=colnames(joint.sce), "UMAP1"=reducedDim(joint.sce, "MNN.UMAP")[, 1],
+                            "UMAP2"=reducedDim(joint.sce, "MNN.UMAP")[, 2])
+joint.mnn.umap <- merge(joint.mnn.umap, joint.meta, by="CellID")
+```
+
+```{r, fig.height=6, fig.width=9}
+pre.mnn <- ggplot(joint.umap, aes(x=UMAP1, y=UMAP2, colour=Batch)) +
+  geom_scattermore(pointsize=1) +
+  theme_cowplot() +
+  scale_colour_npg() +
+  guides(colour=guide_legend(override.aes=list(size=2.5))) +
+  NULL
+
+post.mnn <- ggplot(joint.mnn.umap, aes(x=UMAP1, y=UMAP2, colour=Batch)) +
+  geom_scattermore(pointsize=1) +
+  theme_cowplot() +
+  scale_colour_npg() +
+  guides(colour=guide_legend(override.aes=list(size=2.5))) +
+  NULL
+
+facet.mnn <- ggplot(joint.mnn.umap, aes(x=UMAP1, y=UMAP2, colour=Batch)) +
+  geom_scattermore(data=joint.mnn.umap[, c("UMAP1", "UMAP2")],
+                   pointsize=0.5, colour='grey80') +
+  geom_scattermore(aes(colour=Batch), pointsize=1) +
+  theme_cowplot() +
+  scale_colour_npg() +
+  guides(colour=guide_legend(override.aes=list(size=2.5))) +
+  facet_wrap(~Batch, nrow=1) +
+  NULL
+
+plot_grid(plot_grid(pre.mnn, post.mnn),
+          facet.mnn, byrow=FALSE, ncol=1)
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Wells_Perinatal_integration.png",
+       height=6, width=9, dpi=300, bg='white')
+```
+
+The top left plot shows the data pre-integration, where as to the right
+post-integration. The bottom panel is split by batch to show the
+integration makes visual sense, i.e. the batches are not separated. The
+next step is to use this MNN integrated space to perform a kNN label
+transfer. We begin by building the joint kNN-graph and asking for each
+cell, what the labels of the nearest neighbours are. For this to work we
+would implicitly assume that there are mutual nearest neighbours for all
+cells in both batches. We know this cannot be the case however, as the
+Wells data are a subset of *mostly* mTEC-like cells. Therefore, I will
+need to have most of the perinatal cells unlabelled.
+
+```{r "kNN label transfer Perinatal -> Wells"}
+wells.cells <- which(colData(joint.sce)$Batch %in% c("Wells"))
+perinatal.cells <- which(colData(joint.sce)$Batch %in% c("Perinatal"))
+joint.milo <- Milo(joint.sce)
+joint.milo <- buildGraph(joint.milo, k=21, d=30, reduced.dim="Cosine.MNN")
+joint.graph <- miloR::graph(joint.milo)
+
+wells.label.list <- list()
+for(x in seq_along(wells.cells)){
+  x.idx <- wells.cells[x]
+  x.nn <- unlist(neighborhood(joint.graph, nodes=x.idx))
+  x.peri <- colnames(joint.sce)[intersect(x.nn, perinatal.cells)]
+  if(length(x.peri) > 1){
+    x.nn.labels <- table(cell.to.nhgroup[x.peri, ]$UniqueLabel)
+    x.max.lab <- names(which(x.nn.labels == max(x.nn.labels)))
+  } else{
+    x.max.lab <- "Unknown"
+  }
+  
+  if(length(x.max.lab) > 1){
+    # randomly sample
+    x.label <- sample(x.max.lab, size=1)
+  } else{
+    x.label <- x.max.lab
+  }
+  
+  wells.label.list[[x]] <- data.frame("Idx"=x.idx, "CellID"=colnames(joint.sce)[x.idx], "UniqueLabel"=x.label)
+}
+
+wells.label.df <- do.call(rbind.data.frame, wells.label.list)
+table(wells.label.df$UniqueLabel)
+```
+
+Only 1 unknown cell - that's pretty good. Now I'll cross-compare these
+to the labels from Wells *et al.*.
+
+```{r "compare original labels to kNN labels"}
+wells.compare <- merge(wells.label.df, all.meta, by.x="CellID", by.y="X")
+table(wells.compare$UniqueLabel, wells.compare$at_stage)
+```
+
+
+```{r "construct data frame for alluvial plots"}
+wells.to.perinatal <- as.data.frame(table(wells.compare$UniqueLabel, wells.compare$at_stage))
+
+colnames(wells.to.perinatal) <- c("Perinatal.Group", "Wells", "Freq")
+wells.to.perinatal$Perinatal <- as.character(wells.to.perinatal$Perinatal.Group)
+wells.to.perinatal$Perinatal <- gsub(unlist(lapply(strsplit(wells.to.perinatal$Perinatal, split=" ", fixed=TRUE),
+                                                  FUN=function(PX) paste(tail(PX, 1)))),
+                                    pattern="(\\()([0-9]+)(\\))", replacement="\\2")
+wells.to.perinatal$Perinatal.Group <- factor(gsub(as.character(wells.to.perinatal$Perinatal.Group), pattern="Perinatal_", replacement=""),
+                                             levels= c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)", "mTEC (5)", "Intertypical (6)",
+                                                       "Post-Aire mTEC (7)", "cTEC early (8)", "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                                                       "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)", "Tuft-like mTEC (16)", "ILC-like (17)",
+                                                           "Aire+ mTEC (18)"))
+wells.to.perinatal$Ageing <- factor(gsub(wells.to.perinatal$Wells, pattern="(\\S+_)([0-9]+)", replacement="\\2"),
+                                    levels=c("Late_Aire", "Aire_positive", "Early_Aire", "Ccl21a_high", "Cortico_medullary", "Tuft"))
+
+max.peri <- length(unique(wells.to.perinatal$Perinatal))
+wells.to.perinatal$Perinatal <- factor(wells.to.perinatal$Perinatal,
+                                levels=c(1:max.peri))
+
+# convert to lodes form to use geom_flow and ggrepel
+alluvium.lodes <- to_lodes_form(wells.to.perinatal, axes=c(2, 4), key="Dataset", id="Nhood", value=Group)
+```
+
+
+```{r "alluvium plot of label transfer", fig.height=7.15, fig.width=9.95}
+ggplot(alluvium.lodes, aes(x=Dataset, stratum=Group, alluvium=Nhood, y=Freq)) +
+    geom_flow(aes(fill=Perinatal.Group), width=1/8) +
+    geom_stratum(fill='grey', color = "black", width=1/12) +
+    theme_cowplot() + 
+    geom_text_repel(aes(label = ifelse(as.numeric(Dataset) == 2, as.character(Group), NA)),
+                    stat = "stratum", size = 4, direction = "y", nudge_x = -0.1) +
+    geom_text_repel(aes(label = ifelse(as.numeric(Dataset) == 1, as.character(Group), NA)),
+                    stat = "stratum", size = 4, direction = "y", nudge_x = 0.1) +
+    scale_x_discrete(limits = c("Perinatal", "Wells"), expand = c(0.1, 0)) +
+    scale_fill_manual(values=rev(nhoodlabel.cols)) +
+    guides(fill=guide_legend(title="Perinatal\nTEC Group", override.aes=list(alpha=1, colour='black'), ncol=1)) +
+    theme(axis.line=element_blank(), axis.text.y=element_blank(),
+          axis.title=element_blank(), axis.text.x=element_text(size=20), axis.ticks=element_blank()) +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Alluvium_WellstoPerinatal_NhoodGroupMap.png",
+       height=7.15, width=9.95, dpi=300, bg='white')
+```
+
+Here we can see that almost all of the `Ccl21a_high` group correspond to
+Intertypical and cTEC-biased Intertypical TEC. In their eLife manuscript
+Wells *et al.* describe a `TAC-TEC` population, but none of these labels
+appear here. By inspecting the UMAP and the adjacent populations it
+looks like these are the 'Early_Aire' population in the meta-data. In
+which case in our data \~50% of these cells correspond to Aire+ mTEC,
+25% are Intertypical TEC and the other 25% are Cycling Intertypical TEC.
+
+```{r "visualise labels on UMAP", fig.height=4.25, fig.width=9}
+label.df <- do.call(rbind.data.frame, list(wells.compare[, c("CellID", "UniqueLabel")], as.data.frame(cell.to.nhgroup[, c("CellID", "UniqueLabel")])))
+joint.meta.merge <- merge(joint.mnn.umap, label.df, by='CellID')
+
+
+ggplot(joint.meta.merge, aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(data=joint.mnn.umap[, c("UMAP1", "UMAP2")],
+                   pointsize=0.5, colour='grey90') +
+  geom_scattermore(aes(colour=UniqueLabel), pointsize=1) +
+  theme_cowplot() +
+  scale_colour_manual(values=nhoodlabel.cols) +
+  guides(colour=guide_legend(override.aes=list(size=2.5))) +
+  facet_wrap(~Batch, nrow=1) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Wells_Perinatal_integratedUMAP.png",
+       height=4.5, width=9, bg='white', dpi=300)
+```
+
+```{r "visualise Wells labels on UMAP", fig.height=4.5, fig.width=6}
+wells.meta.merge <- merge(joint.meta.merge, wells.compare[, c("CellID", "UniqueLabel", "stage")], by=c('CellID', 'UniqueLabel'))
+
+
+ggplot(wells.meta.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(data=joint.mnn.umap[, c("UMAP1", "UMAP2")],
+                   pointsize=0.5, colour='grey90') +
+  geom_scattermore(aes(colour=stage), pointsize=1) +
+  theme_cowplot() +
+  scale_colour_d3() +
+  guides(colour=guide_legend(title="Wells label",
+                             override.aes=list(size=2.5))) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Wells_integratedUMAP.png",
+       height=4.5, width=6, bg='white', dpi=300)
+```

@@ -1,0 +1,1825 @@
+---
+title: "Perinatal Thymus Figure 3 analyses"
+output: html_notebook
+---
+
+This notebook performs the analyses and generates the 3rd figure panels for our Perinatal TEC manuscript.
+
+```{r, warning=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+library(SingleCellExperiment)
+library(scran)
+library(scuttle)
+library(irlba)
+library(reshape2)
+library(umap)
+library(igraph)
+library(miloR)
+library(edgeR)
+library(ggplot2)
+library(scattermore)
+library(ggrastr)
+library(scales)
+library(cowplot)
+library(ggsci)
+library(ggrepel)
+library(tidytext)
+library(reshape2)
+library(ggthemes)
+library(biomaRt)
+library(viridis)
+library(ComplexHeatmap)
+library(circlize)
+library(CellChat)
+library(msigdbr)
+library(fgsea)
+library(enrichR)
+library(stringr)
+library(kableExtra)
+library(NMF)
+library(ggalluvial)
+library(knitr)})
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+biomaRt.connection <- useMart("ensembl", "mmusculus_gene_ensembl")
+
+gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name"),
+                 mart=biomaRt.connection)
+rownames(gene.df) <- gene.df$ensembl_gene_id
+```
+
+# Combine iTEC and perinatal annotations
+
+Bring together Perinatal and iTEC annotations.
+
+```{r "load perinatal data"}
+# derive all of the relevant meta data
+perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+
+colData(perinatal.milo)$SortType <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
+colData(perinatal.milo)$TECSort <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
+colData(perinatal.milo)$Day <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\2")
+colData(perinatal.milo)$Day[colData(perinatal.milo)$Day %in% c("d20")] <- "d2"
+colData(perinatal.milo)$Replicate <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\4")
+
+perinatal.nhood.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res-ZsGCompare.txt",
+                                   sep="\t", header=TRUE, stringsAsFactors = FALSE)
+perinatal.nhood.meta$NhoodIdx <- colnames(nhoods(perinatal.milo))
+```
+
+
+```{r "load iTEC data"}
+itec.milo <- readRDS(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Milo.RDS")
+
+itec.nhood.annot <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Nhood_map.tsv",
+                               header=TRUE, stringsAsFactors = FALSE)
+itec.nhood.annot$NhoodLabel <- NA
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(1)] <- "Ly6d- Intertypical TEC (1)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(2)] <- "Proliferating TEC (2)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(3)] <- "cTEC-Primed Intertypical TEC (3)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(4)] <- "Ly6d+ Intertypical TEC (4)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(5)] <- "Immature cTEC (5)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(6)] <- "cTEC-Primed Intertypical cTEC (6)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(7)] <- "Immature mTEC (7)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(8)] <- "mTEC-Primed Intertypical TEC (8)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(9)] <- "Primed-cycling TEC (9)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(10)] <- "Tuft-Primed Intertypical TEC (10)"
+```
+
+The nhoods will be different between the perinatal and iTEC Milo objects. Therefore, I need to assign cells in nhood groups 1, 6, 13 and 15 to their iTEC annotations; all others should 
+remain the same.
+
+I'll first label based on the Perinatal annotation, then add the iTEC after.
+
+```{r, warning=FALSE, message=FALSE}
+# annotate cells with TEC states
+perinatal.meta <- as.data.frame(colData(perinatal.milo))
+rownames(perinatal.meta) <- colnames(perinatal.milo)
+nhood.groups <- unique(perinatal.nhood.meta$Nhood.TEC)
+
+perinatal.meta$Nhood.TEC <- NA
+multiple.labels <- c() # deal with these after
+for(x in seq_along(nhood.groups)){
+  x.tec <- nhood.groups[x]
+  x.nhoods <- unique(perinatal.nhood.meta$Nhood[perinatal.nhood.meta$Nhood.TEC %in% x.tec])
+  x.cells <- colnames(perinatal.milo)[rowSums(nhoods(perinatal.milo)[, x.nhoods, drop=FALSE]) > 0]
+  multiple.labels <- unique(c(multiple.labels, rownames(perinatal.meta[x.cells, ])[which(!is.na(perinatal.meta[x.cells, ]$Nhood.TEC))]))
+  perinatal.meta[setdiff(x.cells, multiple.labels), ]$Nhood.TEC <- x.tec
+}
+
+perinatal.meta[multiple.labels, ]$Nhood.TEC <- NA
+to.label <- rownames(perinatal.meta[is.na(perinatal.meta$Nhood.TEC), ])
+
+# for the multple labelled cells take the majority vote across all their neighbours
+for(i in seq_along(to.label)){
+  i.cell <- to.label[i]
+  i.idx <- which(colnames(perinatal.milo) %in% i.cell)
+  i.neighbours <- neighbors(miloR::graph(perinatal.milo), i.idx)
+  i.tab <- table(perinatal.meta[colnames(perinatal.milo)[i.neighbours], ]$Nhood.TEC)
+  i.max <- names(i.tab)[which(i.tab == max(i.tab))]
+  
+  if(length(i.max) > 1){
+    i.max <- sample(i.max, 1)
+  }
+  
+  perinatal.meta[i.cell, ]$Nhood.TEC <- i.max
+}
+```
+
+Now we add in the Intertypical TEC annotations.
+
+```{r, warning=FALSE, message=FALSE}
+# annotate cells with TEC states
+itec.nhood.groups <- unique(itec.nhood.annot$NhoodLabel)
+
+perinatal.meta$Nhood.iTEC <- NA
+multiple.labels <- c() # deal with these after
+for(x in seq_along(itec.nhood.groups)){
+  x.tec <- itec.nhood.groups[x]
+  x.nhoods <- unique(itec.nhood.annot$Nhood[itec.nhood.annot$NhoodLabel %in% x.tec])
+  x.cells <- colnames(itec.milo)[rowSums(nhoods(itec.milo)[, x.nhoods, drop=FALSE]) > 0]
+  multiple.labels <- unique(c(multiple.labels, rownames(perinatal.meta[x.cells, ])[which(!is.na(perinatal.meta[x.cells, ]$Nhood.iTEC))]))
+  perinatal.meta[setdiff(x.cells, multiple.labels), ]$Nhood.iTEC <- x.tec
+}
+
+perinatal.meta[multiple.labels, ]$Nhood.iTEC <- NA
+to.label <- intersect(rownames(perinatal.meta[is.na(perinatal.meta$Nhood.iTEC), ]), colnames(itec.milo))
+
+# for the multple labelled cells take the majority vote across all their neighbours
+for(i in seq_along(to.label)){
+  i.cell <- to.label[i]
+  i.idx <- which(colnames(itec.milo) %in% i.cell)
+  i.neighbours <- neighbors(miloR::graph(itec.milo), i.idx)
+  i.tab <- table(perinatal.meta[colnames(itec.milo)[i.neighbours], ]$Nhood.iTEC)
+  i.max <- names(i.tab)[which(i.tab == max(i.tab))]
+  
+  if(length(i.max) > 1){
+    i.max <- sample(i.max, 1)
+  }
+  
+  perinatal.meta[i.cell, ]$Nhood.iTEC <- i.max
+}
+```
+
+
+```{r}
+# create the final label
+perinatal.meta$TEC.Label <- perinatal.meta$Nhood.TEC
+perinatal.meta$TEC.Label[!is.na(perinatal.meta$Nhood.iTEC)] <- perinatal.meta$Nhood.iTEC[!is.na(perinatal.meta$Nhood.iTEC)]
+perinatal.meta$CellID <- rownames(perinatal.meta)
+
+umap.df <- as.data.frame(reducedDim(perinatal.milo, "UMAP"))
+umap.df$CellID <- colnames(perinatal.milo)
+perinatal.meta.merge <- merge(perinatal.meta, umap.df, by='CellID')
+
+n.groups <- length(unique(perinatal.meta.merge$TEC.Label))
+samp.cols <- colorRampPalette(pal_d3("category20")(20))(n.groups)
+names(samp.cols) <- unique(perinatal.meta.merge$TEC.Label)
+
+sum(is.na(perinatal.meta.merge$TEC.Label))
+table(perinatal.meta.merge$TEC.Label)
+```
+ 
+How do these look on the big UMAP?
+ 
+```{r, fig.height=4.5, fig.width=12}
+umap.plot <- ggplot(perinatal.meta.merge,
+                    aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(aes(colour=TEC.Label), pointsize=0.75) +
+  scale_colour_manual(values=samp.cols) +
+  theme_cowplot() +
+  guides(colour=guide_legend(override.aes = list(size=4, shape=15))) +
+  # facet_wrap(~SortType) +
+  NULL
+
+ggsave(umap.plot, filename="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_ComAnot-UMAP.png",
+       height=4.5, width=12, dpi=300, bg='white')
+
+umap.plot
+```
+
+
+# Cell-cell communication analysis
+
+For the cross-talk analysis to see if any of the other TEC populations might be interacting with our putative progenitors I am using the `CellChat` package.
+
+```{r}
+# create the cell chat object from the milo object
+colData(perinatal.milo)$Nhood.TEC <- perinatal.meta[colnames(perinatal.milo), ]$TEC.Label
+chat.milo <- perinatal.milo
+# need to filter out a couple of problematic genes
+rowData(chat.milo) <- gene.df[rownames(chat.milo), ]
+chat.milo <- chat.milo[!duplicated(rowData(chat.milo)$external_gene_name), ]
+chat.milo <- chat.milo[!is.na(rowData(chat.milo)$external_gene_name), ]
+rownames(chat.milo) <- rowData(chat.milo)$external_gene_name
+itec.chat <- createCellChat(chat.milo, group.by='Nhood.TEC')
+```
+
+
+
+```{r}
+CellChatDB <- CellChatDB.mouse # use CellChatDB.mouse if running on mouse data
+
+# add this DB
+gene.info <- CellChatDB$geneInfo
+interact.db <- CellChatDB$interaction
+interact.db <- interact.db[!interact.db$ligand %in% c("H2-BI", "H2-Ea-ps"), ]
+CellChatDB$interaction <- interact.db
+itec.chat@DB <- CellChatDB
+
+itec.chat <- subsetData(itec.chat) # subset to just the ligand-receptor pairs of genes
+itec.chat <- identifyOverExpressedGenes(itec.chat)
+itec.chat <- identifyOverExpressedInteractions(itec.chat)
+```
+
+Now compute the communication probability.
+
+```{r}
+itec.chat <- computeCommunProb(itec.chat) # use the default method for averaging gene expression - trimean
+itec.chat <- filterCommunication(itec.chat, min.cells=10) # fitler interactions involving fewer than 10 cells
+```
+
+```{r}
+itec.chat <- computeCommunProbPathway(itec.chat) # infer communication at pathway level
+itec.chat <- aggregateNet(itec.chat) # aggregate signalling between cell types in a network
+```
+
+## Visualise communication network 
+
+We can visualise the aggregated communication network as a circos plot.
+
+```{r}
+groupSize <- as.numeric(table(itec.chat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(itec.chat@net$count, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Number of interactions")
+netVisual_circle(itec.chat@net$weight, vertex.weight = groupSize, weight.scale = TRUE, label.edge= FALSE, title.name = "Interaction weights/strength")
+```
+
+These interactions look very dense. It's hard to see if there is a specific population that act as a hub. We can visualise this instead from each separate 
+TEC state to all others.
+
+```{r, fig.height=9, warning=FALSE}
+# this gives an igraph error
+# mat <- itec.chat@net$weight
+# par(mfrow = c(3,4), xpd=TRUE)
+# for (i in 1:nrow(mat)) {
+#   mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+#   mat2[i, ] <- mat[i, ]
+#   mat2[, i] <- mat[, i]
+#   netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = TRUE)#, edge.weight.max = max(mat2), title.name = rownames(mat2)[i])
+# }
+```
+
+We can't visualise this for some reason - an issue with `igraph`?
+
+Which pathways are detected as significantly communicating between TEC states?
+
+```{r}
+length(itec.chat@netP$pathways)
+itec.chat@netP$pathways
+```
+
+```{r}
+# Compute the network centrality scores
+itec.chat <- netAnalysis_computeCentrality(itec.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+```
+
+
+Which cell types are communicating more with which?
+
+```{r}
+# find the pathways with the the highest incoming and outgoing strengths
+out.deg <- unlist(lapply(itec.chat@netP$pathways, FUN=function(PX, chat){
+  sum(chat@netP$centr[[PX]]$outdeg)
+  }, chat=itec.chat))
+names(out.deg) <- itec.chat@netP$pathways
+out.deg <- out.deg/max(out.deg)
+
+# select pathways with relative weight > 10-3
+plot.paths <- names(out.deg)[out.deg > 1e-4]
+```
+
+
+```{r, fig.width=12, fig.height=15}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+ht1 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths,  pattern = "outgoing", color.use=samp.cols, width=11, height=14)
+ht2 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths, pattern = "incoming", color.use=samp.cols, width=12, height=15)
+# ht1 + ht2
+ht2
+```
+
+There are a lot of potentially active signalling pathways between cell types. We have complementary options: (1) Focus on cell types and pathways of interest, and (2) take 
+a systems-level approach to identify interesting pathways in a data-driven manner. The first would allow us to check for positive and negative control pathways, i.e. where 
+we know there should be signalling based on prior knowledge e.g., BMP, Notch-Dll and Wnt, and where there is no evidence of that signalling pathway in the thymus.
+
+## Systems analysis
+
+### Outgoing signals (ligand secretion)
+
+We first want to identify how many coordinated outgoing signal patterns there are using non-negative matrix factorisation of the communication network edges.
+
+```{r}
+selectK(itec.chat, pattern = "outgoing")
+```
+
+The dip in the cophenetic and silhouette scores at 4 indicates we should select 3 modules/patterns.
+
+```{r, fig.height=9, fig.width=12, warning=FALSE}
+k.mod <- 3
+itec.chat <- identifyCommunicationPatterns(itec.chat, slot.name="netP", pattern = "outgoing", k = k.mod, heatmap.show=TRUE, height=21)
+```
+
+Pattern 1 encompases many of the intertypical TEC states, pattern 2 are the mTEC (and ILC-like), and pattern 3 capture most of the cTEC states. It's hard to visualise the 
+weights of the signalling pathways on each gene with this heatmap. Pathways most strongly loaded on pattern 1 include FGF, NCAM and TRAIL, pattern 2 represents CD52 and CD80 
+which are both indicative of mTEC maturation, as well as TNF (known), IGF, HH and IL4 amongst others. In contrast, pattern 3 is driven by NOTCH (known for interactions with 
+DN and DP thymocytes), WNT, KIT, LIFR and FN1, amongst others. These heatmaps are created jointly, where as they need to be made separately to fit them all in the same space 
+properly. We have previously predicted that FGF expression by Intertypical TEC _might_ be a driver of differentiation restriction - here we can see that they appear to be a 
+source of some FGF signalling components early on.
+
+Visualise in a bubble plot.
+
+```{r, fig.height=5, fig.width=14}
+netAnalysis_dot(itec.chat, pattern = "outgoing")
+```
+
+mTEC (5) are secretors of HH ligands which could be important for thymocyte development.
+
+### Incoming signal (receptor expression)
+
+Now identify how many coordinated incoming/received signal patterns there are using non-negative matrix factorisation of the communication network edges.
+
+```{r}
+selectK(itec.chat, pattern = "incoming")
+```
+
+The dip in the cophenetic and silhouette scores at 4 indicates we should select 3 modules/patterns.
+
+```{r, fig.height=9, fig.width=12, warning=FALSE}
+k.mod <- 4
+itec.chat <- identifyCommunicationPatterns(itec.chat, slot.name="netP", pattern = "incoming", k = k.mod, heatmap.show=TRUE, height=21)
+```
+
+```{r}
+itec.incoming.cells <- dcast(formula=CellGroup ~ Pattern, value.var = "Contribution", data=itec.chat@netP$pattern$incoming$pattern$cell)
+itec.incoming.path <- dcast(formula=Signaling ~ Pattern, value.var="Contribution", data=itec.chat@netP$pattern$incoming$pattern$signaling)
+```
+
+
+```{r}
+# for each module what are the top 5 pathways?
+top.mod.list <- list()
+for(x in seq_len(k.mod)){
+  k.con <- itec.incoming.path[, x+1]
+  names(k.con) <- itec.incoming.path$Signaling
+  top.mod.list[[paste0("Module", x)]] <- names(k.con[order(k.con, decreasing = TRUE)][1:5])
+}
+
+top.mod.df <- do.call(cbind.data.frame, top.mod.list)
+colnames(top.mod.df) <- paste0("Module", c(1:k.mod))
+top.mod.df
+```
+
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=6, fig.width=6}
+ht_opt$message = FALSE
+hm.vals <- as.matrix(itec.incoming.cells[, -1])
+rownames(hm.vals) <- itec.incoming.cells$CellGroup
+colnames(hm.vals) <- paste0("Module", c(1:ncol(hm.vals)))
+
+# hm.cols <- viridis(n=20, option='magma')
+exp.quants <- quantile(hm.vals, c(0.01, 0.99))
+hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "purple"))
+
+annot.df <- data.frame("TECGroup"=itec.incoming.cells$CellGroup)
+rownames(annot.df) <- annot.df$TECGroup
+col.order <- order(annot.df$TECGroup)
+# col.order <- order(annot.df$TECGroup)
+
+col.annot <- rowAnnotation(df=annot.df[col.order, , drop=FALSE],
+                           show_legend=FALSE,
+                           col=list("TECGroup"=samp.cols))
+ht_opt$heatmap_row_names_gp = gpar(fontsize = 14)
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Incoming_NMF-heatmap.png",
+    height=9, width=6, res=300, units="in")
+ht.plot <- Heatmap(hm.vals[col.order, ], col=hm.cols,
+        use_raster=TRUE, cluster_rows=TRUE,
+        heatmap_legend_param=list(title="Contribution", direction="horizontal"),
+        show_column_names=TRUE, cluster_columns=FALSE,
+        show_row_names=TRUE, width=ncol(hm.vals)*unit(5, "mm"), 
+        left_annotation = col.annot)
+draw(ht.plot,  heatmap_legend_side="top")
+dev.off()
+
+
+ht <- Heatmap(hm.vals[col.order,], col=hm.cols,
+              use_raster=TRUE, cluster_rows=TRUE,
+              heatmap_legend_param=list(title="Contribution", direction="horizontal"),
+              show_column_names=TRUE, cluster_columns=FALSE,
+              show_row_names=TRUE, width=ncol(hm.vals)*unit(5, "mm"), 
+              left_annotation=col.annot)
+draw(ht, heatmap_legend_side="top")
+```
+
+I should group these different pathways to highlight secreted and physical interactions, e.g. adhesion molecules, Notch-Dll, etc. This will be based on whether the receptor or 
+ligand is membrane bound or secreted.
+
+```{r}
+path.db <- itec.chat@DB$interaction
+path.annot.list <- list("Physical"=intersect(path.db[path.db$annotation %in% c("Cell-Cell Contact"), ]$pathway_name, itec.chat@netP$pathways),
+                        "ECM"=intersect(path.db[path.db$annotation %in% c("ECM-Receptor"), ]$pathway_name, itec.chat@netP$pathways),
+                        "Secreted"=intersect(path.db[path.db$annotation %in% c("Secreted Signaling"), ]$pathway_name, itec.chat@netP$pathways))
+path.annot.df <- do.call(cbind.data.frame, list(unlist(path.annot.list)))
+colnames(path.annot.df) <- c("Pathway")
+path.annot.df$Annotation <- gsub(x = rownames(path.annot.df), pattern="([A-Za-z]+)([0-9]+)", replacement="\\1")
+rownames(path.annot.df) <- path.annot.df$Pathway
+path.annot.df <- path.annot.df[, -1, drop=FALSE]
+
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=16, fig.width=5}
+ht_opt$message = FALSE
+hm.vals <- as.matrix(itec.incoming.path[, -1])
+rownames(hm.vals) <- itec.incoming.path$Signaling
+colnames(hm.vals) <- paste0("Module", c(1:ncol(hm.vals)))
+
+# hm.cols <- viridis(n=20, option='magma')
+exp.quants <- quantile(hm.vals, c(0.01, 0.99))
+hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "purple"))
+
+annot.cols <- c("darkgreen", "darkorange", "skyblue")
+names(annot.cols) <- c("Physical", "ECM", "Secreted")
+row.annot <- rowAnnotation(df=path.annot.df, show_legend=TRUE,
+                           col=list("Annotation"=annot.cols))
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Incoming_NMF_Pathways-heatmap.png",
+    height=16, width=5, res=300, units="in")
+ht.plot <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
+                   use_raster=TRUE, cluster_rows=TRUE,
+                   row_split=path.annot.df$Annotation,
+                   heatmap_legend_param=list(title="Contribution", direction="horizontal"),
+                   show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
+                   show_row_names=TRUE, left_annotation=row.annot)
+draw(ht.plot,  heatmap_legend_side="top")
+dev.off()
+
+
+ht <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
+              use_raster=TRUE, cluster_rows=TRUE,
+              row_split=path.annot.df$Annotation,
+              heatmap_legend_param=list(title="Contribution", direction="horizontal"),
+              show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
+              show_row_names=TRUE, left_annotation=row.annot)
+draw(ht, heatmap_legend_side="top")
+```
+
+Visualise in a bubble plot.
+
+```{r, fig.height=3, fig.width=8}
+# scale then censor the contributions < 0.5 - only use module 4
+w.norm <- apply(itec.incoming.path[, "Pattern 3", drop=FALSE], 2, FUN=function(RX) RX/max(RX))
+w.norm[w.norm < 0.1] <- 0
+h.norm <- apply(itec.incoming.cells[, "Pattern 3", drop=FALSE], 2, FUN=function(CX) CX/max(CX))
+h.norm[h.norm < 0.1] <- 0
+
+ly6d.contr.df <- as.data.frame(w.norm %*% t(h.norm))
+rownames(ly6d.contr.df) <- itec.incoming.path$Signaling
+colnames(ly6d.contr.df) <- itec.incoming.cells$CellGroup
+ly6d.contr.df$Pathway <- itec.incoming.path$Signaling
+ly6d.contr.melt <- melt(ly6d.contr.df, id.vars="Pathway")
+colnames(ly6d.contr.melt) <- c("Pathway", "TECtype", "Contribution")
+ly6d.contr.melt$TECtype <- as.character(ly6d.contr.melt$TECtype)
+ly6d.contr.melt$Pathway <- as.character(ly6d.contr.melt$Pathway)
+
+ggplot(ly6d.contr.melt[ly6d.contr.melt$TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") &
+                         ly6d.contr.melt$Contribution > 0 & 
+                         ly6d.contr.melt$Pathway %in% rownames(path.annot.df[path.annot.df$Annotation %in% c("Secreted"), ,drop=FALSE]), ],
+       aes(x=TECtype, y=reorder(Pathway, Contribution), size=Contribution, fill=TECtype)) +
+  geom_point(shape=21, show.legend=FALSE) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1,
+                                 family="Roboto"),
+        axis.text=element_text(family="Roboto", size=14),
+        axis.title=element_text(family="Roboto", size=16)) +
+  labs(x="TEC group", y="Pathway") +
+  coord_flip() +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_Ly6d-PathwayContribution-bubble.png",
+       height=3, width=8, dpi=300, bg='white')
+```
+
+This is still a lot of pathways to investigate - these are just the secreted ones. Which of these have ligands or receptors that are DE between Ly6d+/- Intertypical TEC?
+
+```{r}
+ly6d.dge <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Ly6d_DEGs.tsv",
+                       sep="\t", header=TRUE, stringsAsFactors=FALSE)
+sig.paths <- ly6d.contr.melt[ly6d.contr.melt$TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") &
+                         ly6d.contr.melt$Contribution > 0 & 
+                         ly6d.contr.melt$Pathway %in% rownames(path.annot.df[path.annot.df$Annotation %in% c("Secreted"), ,drop=FALSE]), ]$Pathway
+mod3.ligands <- unique(str_to_sentence(unlist(strsplit(path.db$ligand[path.db$pathway_name %in% sig.paths], split="_", fixed=TRUE))))
+mod3.receptors <- unique(str_to_sentence(unlist(strsplit(path.db$receptor[path.db$pathway_name %in% sig.paths], split="_", fixed=TRUE))))
+
+mod3.genes <- unique(c(mod3.ligands, 
+                       mod3.receptors))
+
+de.mod3.ligands <- intersect(mod3.ligands, ly6d.dge$external_gene_name[ly6d.dge$FDR < 0.01])
+de.mod3.receptors <- intersect(mod3.receptors, ly6d.dge$external_gene_name[ly6d.dge$FDR < 0.01])
+de.mod3 <- intersect(mod3.genes, ly6d.dge$external_gene_name[ly6d.dge$FDR < 0.01])
+de.mod3
+```
+
+
+
+```{r, fig.height=5, fig.width=8}
+ly6d.dge$Label <- ly6d.dge$external_gene_name
+ly6d.dge$Label[!ly6d.dge$external_gene_name %in% de.mod3.receptors] <- ""
+ly6d.dge$Label[ly6d.dge$FDR >= 0.1] <- ""
+
+max.x <- max(abs(ly6d.dge$logFC))
+eps.x <- max.x*0.1
+
+ggplot(ly6d.dge, aes(x=logFC, y=-log10(FDR), colour=FDR < 0.1)) +
+  annotate("text", x=-2, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d- Intertypical TEC") +
+  annotate("segment", x=-2, xend=-4, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
+  
+  annotate("text", x=3, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d+ Intertypical TEC") +
+  annotate("segment", x=3, xend=5, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
+  geom_point(alpha=0.1) +
+  geom_point(data=ly6d.dge[ly6d.dge$external_gene_name %in% de.mod3.receptors, ], colour="purple", shape=18, size=3) +
+  theme_cowplot() +
+  geom_label_repel(aes(label=Label), colour="black",
+                   max.overlaps=Inf,
+                   size=4, family="Roboto",
+                   force=20, force_pull=10) +
+  scale_colour_manual(values=c("TRUE"="red3", "FALSE"="black"), breaks=c("TRUE", "FALSE")) +
+  guides(colour=guide_legend(title="DGE 10% FDR", override.aes=list(shape=15, size=4, alpha=1))) +
+  labs(x="log Fold Change", y=expression(paste("-log"[10], " FDR"))) +
+  scale_x_continuous(limits=c(-max.x-eps.x, max.x+eps.x)) +
+  theme(axis.text=element_text(size=14, face="bold", family="Roboto"),
+        axis.title=element_text(size=14, face="bold", family="Roboto")) +
+  NULL
+  
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-CellChat_receptors-volcano.png",
+       height=5, width=8, dpi=300, bg='white')
+```
+
+These are the DE receptors between Ly6d+/- Intertypical TEC.
+
+```{r, fig.height=5, fig.width=8}
+ly6d.dge$Label <- ly6d.dge$external_gene_name
+ly6d.dge$Label[!ly6d.dge$external_gene_name %in% de.mod3.ligands] <- ""
+ly6d.dge$Label[ly6d.dge$FDR >= 0.1] <- ""
+
+max.x <- max(abs(ly6d.dge$logFC))
+eps.x <- max.x*0.1
+
+ggplot(ly6d.dge, aes(x=logFC, y=-log10(FDR), colour=FDR < 0.1)) +
+  annotate("text", x=-2, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d- Intertypical TEC") +
+  annotate("segment", x=-2, xend=-4, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
+  
+  annotate("text", x=3, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d+ Intertypical TEC") +
+  annotate("segment", x=3, xend=5, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
+  geom_point(alpha=0.1) +
+  geom_point(data=ly6d.dge[ly6d.dge$external_gene_name %in% de.mod3.ligands, ], colour="purple", shape=18, size=3) +
+  theme_cowplot() +
+  geom_label_repel(aes(label=Label), colour="black",
+                   max.overlaps=Inf,
+                   size=4, family="Roboto",
+                   force=20, force_pull=10) +
+  scale_colour_manual(values=c("TRUE"="red3", "FALSE"="black"), breaks=c("TRUE", "FALSE")) +
+  guides(colour=guide_legend(title="DGE 10% FDR", override.aes=list(shape=15, size=4, alpha=1))) +
+  labs(x="log Fold Change", y=expression(paste("-log"[10], " FDR"))) +
+  scale_x_continuous(limits=c(-max.x-eps.x, max.x+eps.x)) +
+  theme(axis.text=element_text(size=14, face="bold", family="Roboto"),
+        axis.title=element_text(size=14, face="bold", family="Roboto")) +
+  NULL
+  
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-CellChat_ligands-volcano.png",
+       height=5, width=8, dpi=300, bg='white')
+```
+
+These are the DE ligands between Ly6d+/- Intertypical TEC.
+
+### Multi-way chord plots
+
+```{r, fig.height=18}
+#par(mfrow=c(1,1))
+png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_FGF-ChordAgg.png",
+    height=18, width=18, units="in", res=300)
+netVisual_aggregate(itec.chat, signaling = "FGF", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+dev.off()
+
+netVisual_aggregate(itec.chat, signaling = "FGF", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+```
+
+```{r, fig.height=18}
+#par(mfrow=c(1,1))
+png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_WNT-ChordAgg.png",
+    height=18, width=18, units="in", res=300)
+netVisual_aggregate(itec.chat, signaling = "WNT", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+dev.off()
+
+netVisual_aggregate(itec.chat, signaling = "WNT", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+```
+
+
+```{r, fig.height=18}
+#par(mfrow=c(1,1))
+png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-ChordAgg.png",
+    height=18, width=18, units="in", res=300)
+netVisual_aggregate(itec.chat, signaling = "BMP", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+dev.off()
+
+netVisual_aggregate(itec.chat, signaling = "BMP", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+```
+
+Let's take a look at the pathways that differ between the two pTEC states.
+
+```{r, fig.height=18}
+#par(mfrow=c(1,1))
+png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_IGF-ChordAgg.png",
+    height=18, width=18, units="in", res=300)
+netVisual_aggregate(itec.chat, signaling = "IGF", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+dev.off()
+
+netVisual_aggregate(itec.chat, signaling = "IGF", layout = "chord", vertex.label.cex=1.25, pt.title=20)
+```
+
+### JAM
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("JAM") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+galectin.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="JAM pathway", return.data=TRUE)$LR.contribution
+
+ggplot(galectin.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="JAM pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-JAM_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "JAM")
+```
+
+### GALECTIN
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("GALECTIN") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+galectin.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="GALECTIN pathway", return.data=TRUE)$LR.contribution
+
+ggplot(galectin.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="GRN pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GALECTIN_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "GALECTIN")
+```
+
+Cd44, which is a ligand for Lgals9 is moderately more highly expressed in the Ly6d+ Intertypical TEC, however, Lgals9 is equally highly expressed.
+
+### GRN
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("GRN") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+grn.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="GRN pathway", return.data=TRUE)$LR.contribution
+
+ggplot(grn.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="GRN pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GRN_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "GRN")
+```
+
+There doesn't seem to be a paricular difference between Ly6d+/- Intertypical TEC - the main differences are int he Tuft-like mTEC.
+
+### CCL
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("CCL") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+ccl.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="CCL pathway", return.data=TRUE)$LR.contribution
+
+ggplot(ccl.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="CCL pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-CCL_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+Unsurprising that Ccl21 is the main culprit here.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "CCL")
+```
+
+That's interesting. _Ackr4_, the atypical chemokine receptor that binds Ccl21a, Ccl19 and Ccl25 is expressed on the Ly6d- but not Ly6d+ Intertypical TEC. It is also expressed 
+on the cTEC lineage, but not mTEC, so is all the Ccl21a expression actually for the benefit of the TEC progenitors, not just the thymocytes?? Apparently Ccl* binding to 
+Ackr4 leads to receptor:ligand complex internalisation but not GPCR activation, thereby sequetering away chemokines, presumably from thymocytes. If so, then this suggests 
+a mechanism for keeping thymocytes in proximity of cTEC cells in the cortex, even though other cells are pumping out Ccl21a, Ccl19 and Ccl25.
+
+### CADM
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("CADM") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look quite symmetric, i.e. strong receiver are strong senders, and _vice versa_.
+
+```{r, fig.height=4, fig.width=6}
+cadm.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="CADM pathway", return.data=TRUE)$LR.contribution
+
+ggplot(cadm.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="CADM pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-CADM_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+Cadm1 is an adhesion molecular that forms self:self interactions. With CRTAM on T cells, it could be involved in thymocyte retention in specific areas of the thymus?
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "CADM")
+```
+
+
+### EPHA
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("EPHA") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+epha.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="EPHA pathway", return.data=TRUE)$LR.contribution
+
+ggplot(epha.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="EPHA pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-EPHA_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+There is a broad spectrum of Ephrin interactions.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "EPHA")
+```
+
+The differential between Ly6d+ and Ly6d- Intertypical TEC apears to be in _Efna5_ expression, and perhaps lower _Epha1_. This is where spatial profiling of the receptor and 
+ligand would be useful to understand exactly which cells are interfacing, otherwise it is quite speculative.
+
+### MPZ
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("MPZ") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+mpz.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="MPZ pathway", return.data=TRUE)$LR.contribution
+
+ggplot(mpz.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="MPZ pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-MPZ_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+There is a broad spectrum of Ephrin interactions.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "MPZ")
+```
+
+Mpzl1 is weakly expressed in the Ly6d- Intertypical TEC, but not the Ly6d+. It seems to be involved in cell adhesion.
+
+### NRXN
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("NRXN") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+nrxn.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="NRXN pathway", return.data=TRUE)$LR.contribution
+
+ggplot(nrxn.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="CCL pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-NRXN_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+Unsurprising that Ngln1 is the main culprit here.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "NRXN")
+```
+
+Nlgn1/2 are expressed in the Ly6d+ Intertypical TEC, but not Ly6d+ - this seems to be the general pattern across these pathways. The other is that the Ly6d- patterns are 
+shared with the cTEC-biased/lineage cells.
+
+### SLURP
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("SLURP") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+slurp.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="SLURP pathway", return.data=TRUE)$LR.contribution
+
+ggplot(slurp.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="SLURP pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-SLURP_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+Unsurprising that Chrna9 is the main culprit here.
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "SLURP")
+```
+
+That is pretty marginal - maybe there is slightly more in the Ly6d+ Intertpical TEC, but the strongest signal is in the Sca1+ mTEC (mature).
+
+### ACTIVIN
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("ACTIVIN") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These are quite specific to the cycling cTEC and Sca1+ mTEC - why is this highlighted in the Ly6d+/- Intertypical TEC?
+
+```{r, fig.height=4, fig.width=6}
+activin.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="ACTIVIN pathway", return.data=TRUE)$LR.contribution
+
+ggplot(activin.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="ACTIVIN pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-ACTIVIN_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "ACTIVIN")
+```
+
+None of the components are particularly strongly expressed in the Ly6d+/- compartment.
+
+### FGF
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("FGF") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+
+```{r, fig.height=2.5, fig.width=6}
+fgf.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="FGF pathway", return.data=TRUE)$LR.contribution
+
+ggplot(fgf.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="FGF pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-FGF_contribution.png",
+       height=2.5, width=6, dpi=300, bg='white')
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "FGF", color.use=samp.cols)
+```
+
+These aren't all of the FGF signalling components.
+
+```{r}
+fgf.receptors <- gene.df$external_gene_name[grepl(gene.df$external_gene_name, pattern="Fgfr[0-9]+$")]
+fgf.ligands <- gene.df$external_gene_name[grepl(gene.df$external_gene_name, pattern="Fgf[0-9]+$")]
+
+# rowscale the expression
+fgf.exprs <- as.data.frame(scale(t(logcounts(chat.milo[rownames(chat.milo) %in% c(fgf.receptors, fgf.ligands), ])), center=TRUE, scale=TRUE))
+max.y <- quantile(as.vector(as.matrix(fgf.exprs)), c(0.01, 0.99))
+
+# colnames(fgf.exprs) <- gene.df[colnames(fgf.exprs), ]$external_gene_name
+fgf.exprs$CellID <- colnames(chat.milo)
+chat.meta <- colData(chat.milo)
+chat.meta$CellID <- colnames(chat.milo)
+
+fgf.meta <- merge(fgf.exprs, as.data.frame(chat.meta), by='CellID')
+```
+
+
+```{r, fig.height=7, fig.width=12}
+fgf.plot.df <- melt(fgf.meta, 
+                    measure.vars=setdiff(colnames(fgf.exprs), c("CellID")))
+fgf.plot.df$variable <- as.character(fgf.plot.df$variable)
+
+ggplot(fgf.plot.df[fgf.plot.df$variable %in% fgf.receptors, ], 
+       aes(x=Nhood.TEC, y=value, fill=Nhood.TEC)) +
+  geom_violin(scale="width") +
+  facet_wrap(~variable, ncol=1) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(family="Roboto", size=12),
+        axis.text=element_text(family="Roboto", size=12),
+        axis.title=element_text(family="Roboto", size=14),
+        legend.title=element_text(family="Roboto"),
+        legend.text=element_text(family="Roboto")) +
+  guides(fill=guide_legend(title="TEC Group")) +
+  labs(x="TEC Group", y="Z-score") +
+  scale_y_continuous(limits=c(max.y[1], max.y[2]), oob=censor) +
+  # theme(axis.text.x=element_blank()) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Fgfr-violin.png",
+       height=7, width=12, dpi=300, bg='white')
+```
+
+
+```{r, fig.height=12, fig.width=12}
+ggplot(fgf.plot.df[fgf.plot.df$variable %in% fgf.ligands, ], 
+       aes(x=Nhood.TEC, y=value, fill=Nhood.TEC)) +
+  geom_violin(scale="width", show.legend = FALSE) +
+  facet_wrap(~variable, ncol=2) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(family="Roboto", size=12),
+        axis.text=element_text(family="Roboto", size=12),
+        axis.title=element_text(family="Roboto", size=14),
+        legend.title=element_text(family="Roboto"),
+        legend.text=element_text(family="Roboto")) +
+  guides(fill=guide_legend(title="TEC Group")) +
+  labs(x="TEC Group", y="Z-score") +
+  scale_y_continuous(limits=c(max.y[1], max.y[2]), oob=censor) +
+  # theme(axis.text.x=element_blank()) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Fgfligand-violin.png",
+       height=12, width=12, dpi=300, bg='white')
+```
+
+### OCLN
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("OCLN") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+
+```{r, fig.height=2.5, fig.width=6}
+ocln.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="OCLN pathway", return.data=TRUE)$LR.contribution
+
+ggplot(ocln.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="OCLN pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-OCLN_contribution.png",
+       height=2.5, width=6, dpi=300, bg='white')
+```
+
+
+### ANGPT
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("ANGPT") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+
+```{r, fig.height=2.5, fig.width=6}
+angpt.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="ANGPT pathway", return.data=TRUE)$LR.contribution
+
+ggplot(angpt.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="OCLN pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-ANGPT_contribution.png",
+       height=2.5, width=6, dpi=300, bg='white')
+```
+
+### PROS
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("PROS") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+
+```{r, fig.height=2.5, fig.width=6}
+pros.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="PROS pathway", return.data=TRUE)$LR.contribution
+
+ggplot(pros.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="PROS pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-PRPS_contribution.png",
+       height=2.5, width=6, dpi=300, bg='white')
+```
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "PROS")
+```
+
+### GAS
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("GAS") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+
+```{r, fig.height=2.5, fig.width=6}
+gas.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="GAS pathway", return.data=TRUE)$LR.contribution
+
+ggplot(gas.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="GAS pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GAS_contribution.png",
+       height=2.5, width=6, dpi=300, bg='white')
+```
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "GAS")
+```
+
+As we have identified _Lgr6_ as a marker of Ly6d+ Intertypical TEC, I shall focus on R-spon-Lgr interations, along with Wnt, BMP and TGF-beta as these are important for TEC renewal.
+
+### BMP
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("BMP") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r, fig.height=2.5, fig.width=6}
+bmp.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="BMP pathway", return.data=TRUE)$LR.contribution
+
+ggplot(bmp.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="BMP pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-BMP_contribution.png",
+       height=2.5, width=6, dpi=300, bg='white')
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+This indicates Ly6d- Intertypical TEC are responsive to BMP signals. Are there any cell types that are more likely to act as senders or receivers?
+
+```{r, fig.height=5, fig.width=15}
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-Centrality.png",
+    height=6.5, width=16.5, res=300, units="in")
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 16, height = 6, font.size = 14, color.use=samp.cols,
+                                  font.size.title = 14, cluster.rows=TRUE, cluster.cols=TRUE)
+dev.off()
+
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 16, height = 6, font.size = 14, color.use=samp.cols,
+                                  font.size.title = 14, cluster.rows=TRUE, cluster.cols=TRUE)
+```
+
+In terms of BMP signalling - Ly6d- Intertypical TEC tend to be the receivers and mTEC-primed intertypical TEC tend to be senders. What is the consequence of BMP signalling on the 
+Ly6d- Intertypical TEC - is this inhibitory or activatory?
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = c("BMP"))
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+How robust would an argument be that BMP secreted from mTEC-Primed Intertypical TEC acts on the cTEC-biased progenitors to inhibit their differentiation? After all this is the period 
+in which the medulla expands and the cortex contracts. Ann Chidgey's lab suggest BMP4 promotes progenitor self-renewal, but at this early stage is it actually inhibiting cTEC 
+differentiation?
+
+Is a chord or hierarchy plot useful here? One for the aggregated pathway.
+
+```{r, fig.height=18}
+#par(mfrow=c(1,1))
+png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-ChordAgg.png",
+    height=18, width=18, units="in", res=300)
+netVisual_aggregate(itec.chat, signaling = pathways.show, layout = "chord", vertex.label.cex=1.25, pt.title=20)
+dev.off()
+
+netVisual_aggregate(itec.chat, signaling = pathways.show, layout = "chord", vertex.label.cex=1.25, pt.title=20)
+```
+
+Although this is quite dense, we can see that some cell types are only senders or receivers, while some are both. For eaxmple the Ly6d- Intertypical TEC, Tuft-Primed Intertypical TEC,
+Sca1+ mTEC, cTEC late and ILC-like cells are only receivers of BMP signalling, while Intertypical, mTEC and Cycling mTEC are only BMP senders; the others appear to both send and receive 
+BMP signals.
+while 
+
+
+```{r, fig.height=12}
+# Chord diagram
+pairLR.CXCL <- extractEnrichedLR(itec.chat, signaling = pathways.show, geneLR.return = FALSE)
+LR.show <- pairLR.CXCL[order(bmp.imp.data$contribution, decreasing = FALSE), ,drop=FALSE][1, ] # select the L-R pair with the highest contribution
+
+netVisual_individual(itec.chat, signaling = pathways.show, pairLR.use = LR.show, layout = "chord")
+```
+
+
+### WNT
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("WNT") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+WNT signalling doesn't look particularly discriminatory.
+
+```{r, fig.height=5, fig.width=6}
+wnt.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="WNT pathway", return.data=TRUE, thresh=0.1)$LR.contribution
+
+ggplot(wnt.imp.data[wnt.imp.data$contribution >= 0.01, ], aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="WNT pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-WNT_contribution.png",
+       height=5, width=6, dpi=300, bg='white')
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=9, fig.width=14}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+This looks like the Immature mTEC communicate specifically through Wnt10a/b and Wnt4 with most other cell types, while the Ly6d+ Intertypical TEC and mTEC-primed Intertypical TEC 
+specifically interaction via Wnt10a. Interestingly, they are only interacting with other mTEC-biased/lineage TEC states via Lrp5, but all TEC states via Lrp6. I'll need to look at 
+the expression patterns of these ligands and receptors more closely.
+
+```{r, warning=FALSE, message=FALSE, fig.height=8, fig.width=8}
+plotGeneExpression(itec.chat, signaling = "WNT")
+```
+This demonstrates very nicely that the Immature mTEC and Ly6d+ Intertypical TEC express Wnt10a, which can then interaction with all other TEC states via Lrp6. What does 
+Wnt signalling do in the thymus exactly?
+
+
+```{r}
+wnt.receptors <- gene.df$external_gene_name[grepl(gene.df$external_gene_name, pattern="Fzd[0-9]+$|Lrp[0-9]$")]
+wnt.ligands <- gene.df$external_gene_name[grepl(gene.df$external_gene_name, pattern="Wnt[0-9]+[a-z]?$")]
+
+# rowscale the expression
+wnt.exprs <- logcounts(chat.milo[rownames(chat.milo) %in% c(wnt.receptors, wnt.ligands), ])
+# remove non-expressed genes
+min.mean <- 0.05
+wnt.exprs <- wnt.exprs[rowMeans2(wnt.exprs) > min.mean, ]
+wnt.exprs <- as.data.frame(scale(t(wnt.exprs), center=TRUE, scale=TRUE))
+max.y <- quantile(as.vector(as.matrix(wnt.exprs)), c(0.01, 0.99))
+
+# colnames(wnt.exprs) <- gene.df[colnames(wnt.exprs), ]$external_gene_name
+wnt.exprs$CellID <- colnames(chat.milo)
+chat.meta <- colData(chat.milo)
+chat.meta$CellID <- colnames(chat.milo)
+
+wnt.meta <- merge(wnt.exprs, as.data.frame(chat.meta), by='CellID')
+```
+
+
+```{r, fig.height=7, fig.width=12}
+wnt.plot.df <- melt(wnt.meta, 
+                    measure.vars=setdiff(colnames(wnt.exprs), c("CellID")))
+wnt.plot.df$variable <- as.character(wnt.plot.df$variable)
+
+ggplot(wnt.plot.df[wnt.plot.df$variable %in% c("Fzd2", "Fzd3", "Fzd4", "Lrp6"), ], 
+       aes(x=Nhood.TEC, y=value, fill=Nhood.TEC)) +
+  geom_violin(scale="width") +
+  facet_wrap(~variable, ncol=1) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(family="Roboto", size=12),
+        axis.text=element_text(family="Roboto", size=12),
+        axis.title=element_text(family="Roboto", size=14),
+        legend.title=element_text(family="Roboto"),
+        legend.text=element_text(family="Roboto")) +
+  guides(fill=guide_legend(title="TEC Group")) +
+  labs(x="TEC Group", y="Z-score") +
+  scale_y_continuous(limits=c(max.y[1], max.y[2]), oob=censor) +
+  # theme(axis.text.x=element_blank()) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntreceptors-violin.png",
+       height=7, width=12, dpi=300, bg='white')
+```
+
+```{r, fig.height=7, fig.width=12}
+# this is just for the legend.
+
+ggplot(wnt.plot.df[wnt.plot.df$variable %in% c("Fzd2", "Fzd3", "Fzd4", "Lrp6"), ], 
+       aes(x=Nhood.TEC, y=value, fill=Nhood.TEC)) +
+  geom_violin(scale="width") +
+  facet_wrap(~variable, ncol=1) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(family="Roboto", size=12),
+        axis.text=element_text(family="Roboto", size=12),
+        axis.title=element_text(family="Roboto", size=14),
+        legend.title=element_text(family="Roboto"),
+        legend.text=element_text(family="Roboto")) +
+  guides(fill=guide_legend(title="TEC Group", ncol=3)) +
+  labs(x="TEC Group", y="Z-score") +
+  scale_y_continuous(limits=c(max.y[1], max.y[2]), oob=censor) +
+  # theme(axis.text.x=element_blank()) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntreceptors_LEGEND-violin.png",
+       height=7, width=14, dpi=300, bg='white')
+```
+
+```{r, fig.height=12, fig.width=12}
+ggplot(wnt.plot.df[wnt.plot.df$variable %in% wnt.ligands, ], 
+       aes(x=Nhood.TEC, y=value, fill=Nhood.TEC)) +
+  geom_violin(scale="width", show.legend = FALSE) +
+  facet_wrap(~variable, ncol=2) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(family="Roboto", size=12),
+        axis.text=element_text(family="Roboto", size=12),
+        axis.title=element_text(family="Roboto", size=14),
+        legend.title=element_text(family="Roboto"),
+        legend.text=element_text(family="Roboto")) +
+  guides(fill=guide_legend(title="TEC Group")) +
+  labs(x="TEC Group", y="Z-score") +
+  scale_y_continuous(limits=c(max.y[1], max.y[2]), oob=censor) +
+  # theme(axis.text.x=element_blank()) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntligand-violin.png",
+       height=12, width=12, dpi=300, bg='white')
+```
+
+
+
+
+```{r, fig.height=6, fig.width=16}
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_WNT-Centrality.png",
+    height=6.5, width=16.5, res=300, units="in")
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 16, height = 6, font.size = 14, color.use=samp.cols,
+                                  font.size.title = 14, cluster.rows=TRUE, cluster.cols=TRUE)
+dev.off()
+
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 16, height = 6, font.size = 14, color.use=samp.cols,
+                                  font.size.title = 14, cluster.rows=TRUE, cluster.cols=TRUE)
+```
+
+
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = c("WNT"))
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+cTEC are both senders and receivers while Immature mTEC tend to be senders of Wnt signals.
+
+```{r, fig.height=18}
+#par(mfrow=c(1,1))
+png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_Wnt-ChordAgg.png",
+    height=18, width=18, units="in", res=300)
+netVisual_aggregate(itec.chat, signaling = pathways.show, layout = "chord", vertex.label.cex=1.25, pt.title=20)
+dev.off()
+
+netVisual_aggregate(itec.chat, signaling = pathways.show, layout = "chord", vertex.label.cex=1.25, pt.title=20)
+```
+
+### ncWNT
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("ncWNT") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions? This looks rather interesting for non-canonical Wnt signalling; Ly6d- intertypical TEC are the _only_ senders.
+
+```{r}
+netAnalysis_contribution(itec.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=8, fig.width=8}
+plotGeneExpression(itec.chat, signaling = "ncWNT")
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+itec.chat <- netAnalysis_computeCentrality(itec.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of non-canonical Wnt signalling - Ly6d- Intertypical TEC are the only seners whith most other TEC states acting as receivers.
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+
+### TGFbeta
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("TGFb") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(itec.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+itec.chat <- netAnalysis_computeCentrality(itec.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of TGF-beta signalling - cTEC states tend to be the receivers and mitotic mTEC tend to be senders
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+
+### LIFR
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("LIFR") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(itec.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+itec.chat <- netAnalysis_computeCentrality(itec.chat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 8, height = 2.5, font.size = 10)
+```
+
+In terms of TGF-beta signalling - cTEC states tend to be the receivers and mitotic mTEC tend to be senders
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+### NOTCH
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("NOTCH") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(itec.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=6, fig.width=12}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 15, height = 2.5, font.size = 10)
+```
+
+In terms of TGF-beta signalling - cTEC states tend to be the receivers and mitotic mTEC tend to be senders
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "NOTCH")
+```
+
+
+
+
+### TRAIL
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("TRAIL") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+These look a bit more cTEC-like in their patterns.
+
+```{r, fig.height=4, fig.width=6}
+trail.imp.data <- netAnalysis_contribution(itec.chat, signaling = pathways.show, width=0.1, title="TRAIL pathway", return.data=TRUE)$LR.contribution
+
+ggplot(trail.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
+  geom_bar(stat='identity', colour='black', fill='black') +
+  theme_cowplot() +
+  labs(x="Relative contribution", y="L-R pairs", title="SLURP pathway") +
+  expand_limits(x=c(0, 1)) +
+  theme(axis.text=element_text(size=16, face="bold", family="Roboto"),
+        axis.title=element_text(size=16, face="bold", family="Roboto")) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-TRAIL_contribution.png",
+       height=4, width=6, dpi=300, bg='white')
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=5, fig.width=11}
+plotGeneExpression(itec.chat, signaling = "TRAIL")
+```
+
+_Tnfsf10_ is highly expressed in the Ly6d+ Intertypical TEC, indicating it is a strong sender of TRAIL signalling. Why would a progenitor be a source of a ligand that induces 
+apoptosis?
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 14, height = 2.5, font.size = 10)
+```
+
+The network centrality analysis corroborates Ly6d+ Intertypical TEC as a major send of TRAIL signalling, with the main receivers appear to be Aire+ mTEC.
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = pathways.show, color.use=samp.cols)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+
+### IGF
+
+```{r, fig.height=6, fig.width=7}
+pathways.show <- c("IGF") 
+par(mfrow=c(1,1))
+netVisual_heatmap(itec.chat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+What is the contribution of each ligand-receptor pair to these inferred interactions?
+
+```{r}
+netAnalysis_contribution(itec.chat, signaling = pathways.show)
+```
+
+We can visualise these ligand-receptor pairs for all cell types.
+
+```{r, fig.height=5, fig.width=9}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathways.show)
+#> Comparing communications on a single object
+```
+
+Are there any cell types that are more likely to act as senders or receivers?
+
+```{r}
+# Compute the network centrality scores
+# Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
+netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 14, height = 2.5, font.size = 10)
+```
+
+In terms of TGF-beta signalling - cTEC states tend to be the receivers and mitotic mTEC tend to be senders
+
+```{r}
+# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# gg1 <- netAnalysis_signalingRole_scatter(itec.chat)
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+# Signaling role analysis on the cell-cell communication networks of interest
+gg2 <- netAnalysis_signalingRole_scatter(itec.chat, signaling = pathways.show)
+#> Signaling role analysis on the cell-cell communication network from user's input
+gg2
+```
+
+```{r, warning=FALSE, message=FALSE, fig.height=8, fig.width=8}
+plotGeneExpression(itec.chat, signaling = "IGF", color.use=samp.cols)
+```
+
+```{r}
+igf.receptors <- gene.df$external_gene_name[grepl(gene.df$external_gene_name, pattern="Igf[0-9]+[a-z]?$|Itg[a-z][0-9]$")]
+igf.ligands <- gene.df$external_gene_name[grepl(gene.df$external_gene_name, pattern="Igf[0-9]+$|Itg[a-z][0-9]$")]
+
+# rowscale the expression
+igf.exprs <- logcounts(chat.milo[rownames(chat.milo) %in% c(igf.receptors, igf.ligands), ])
+# remove non-expressed genes
+min.mean <- 0.05
+igf.exprs <- igf.exprs[rowMeans2(igf.exprs) > min.mean, ]
+igf.exprs <- as.data.frame(scale(t(igf.exprs), center=TRUE, scale=TRUE))
+max.y <- quantile(as.vector(as.matrix(igf.exprs)), c(0.01, 0.99))
+
+# colnames(igf.exprs) <- gene.df[colnames(igf.exprs), ]$external_gene_name
+igf.exprs$CellID <- colnames(chat.milo)
+chat.meta <- colData(chat.milo)
+chat.meta$CellID <- colnames(chat.milo)
+
+igf.meta <- merge(igf.exprs, as.data.frame(chat.meta), by='CellID')
+```
+
+
+```{r, fig.height=7, fig.width=12}
+igf.plot.df <- melt(igf.meta, 
+                    measure.vars=setdiff(colnames(igf.exprs), c("CellID")))
+igf.plot.df$variable <- as.character(igf.plot.df$variable)
+
+ggplot(igf.plot.df[igf.plot.df$variable %in% c("Itga6", "Itgb1", "Igf1", "Igf1r"), ], 
+       aes(x=Nhood.TEC, y=value, fill=Nhood.TEC)) +
+  geom_violin(scale="width") +
+  facet_wrap(~variable, ncol=1) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white', colour='white'),
+        strip.text=element_text(family="Roboto", size=12),
+        axis.text=element_text(family="Roboto", size=12),
+        axis.title=element_text(family="Roboto", size=14),
+        legend.title=element_text(family="Roboto"),
+        legend.text=element_text(family="Roboto")) +
+  guides(fill=guide_legend(title="TEC Group")) +
+  labs(x="TEC Group", y="Z-score") +
+  scale_y_continuous(limits=c(max.y[1], max.y[2]), oob=censor) +
+  # theme(axis.text.x=element_blank()) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-IGFreceptors-violin.png",
+       height=7, width=12, dpi=300, bg='white')
+```
+
+
