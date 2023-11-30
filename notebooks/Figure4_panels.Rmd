@@ -56,7 +56,7 @@ Bring together Perinatal and iTEC annotations.
 
 ```{r "load perinatal data"}
 # derive all of the relevant meta data
-perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+perinatal.milo <- readRDS("~/Dropbox/Mike Morgan/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
 
 colData(perinatal.milo)$SortType <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
 colData(perinatal.milo)$TECSort <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
@@ -64,16 +64,16 @@ colData(perinatal.milo)$Day <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0
 colData(perinatal.milo)$Day[colData(perinatal.milo)$Day %in% c("d20")] <- "d2"
 colData(perinatal.milo)$Replicate <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\4")
 
-perinatal.nhood.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res-ZsGCompare.txt",
+perinatal.nhood.meta <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Milo_res-ZsGCompare.txt",
                                    sep="\t", header=TRUE, stringsAsFactors = FALSE)
 perinatal.nhood.meta$NhoodIdx <- colnames(nhoods(perinatal.milo))
 ```
 
 
 ```{r "load iTEC data"}
-itec.milo <- readRDS(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Milo.RDS")
+itec.milo <- readRDS(file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_Milo.RDS")
 
-itec.nhood.annot <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Nhood_map.tsv",
+itec.nhood.annot <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_Nhood_map.tsv",
                                header=TRUE, stringsAsFactors = FALSE)
 itec.nhood.annot$NhoodLabel <- NA
 itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(1)] <- "Ly6d- Intertypical TEC (1)"
@@ -81,7 +81,7 @@ itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(2)] <- "Prolifera
 itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(3)] <- "cTEC-Primed Intertypical TEC (3)"
 itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(4)] <- "Ly6d+ Intertypical TEC (4)"
 itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(5)] <- "Immature cTEC (5)"
-itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(6)] <- "cTEC-Primed Intertypical cTEC (6)"
+itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(6)] <- "cTEC-Primed Intertypical TEC (6)"
 itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(7)] <- "Immature mTEC (7)"
 itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(8)] <- "mTEC-Primed Intertypical TEC (8)"
 itec.nhood.annot$NhoodLabel[itec.nhood.annot$NhoodGroup %in% c(9)] <- "Primed-cycling TEC (9)"
@@ -181,7 +181,14 @@ names(samp.cols) <- unique(perinatal.meta.merge$TEC.Label)
 sum(is.na(perinatal.meta.merge$TEC.Label))
 table(perinatal.meta.merge$TEC.Label)
 ```
- 
+
+We will exclude the ILC-like cells from this analysis.
+
+```{r}
+perinatal.meta.merge <- perinatal.meta.merge[!perinatal.meta.merge$TEC.Label %in% c("ILC-like (14)", "ILC-like (17)", "ILC-like (9)"), ]
+```
+
+
 How do these look on the big UMAP?
  
 ```{r, fig.height=4.5, fig.width=12}
@@ -194,7 +201,7 @@ umap.plot <- ggplot(perinatal.meta.merge,
   # facet_wrap(~SortType) +
   NULL
 
-ggsave(umap.plot, filename="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_ComAnot-UMAP.png",
+ggsave(umap.plot, filename="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_ComAnot-UMAP.png",
        height=4.5, width=12, dpi=300, bg='white')
 
 umap.plot
@@ -208,12 +215,19 @@ For the cross-talk analysis to see if any of the other TEC populations might be 
 ```{r}
 # create the cell chat object from the milo object
 colData(perinatal.milo)$Nhood.TEC <- perinatal.meta[colnames(perinatal.milo), ]$TEC.Label
+perinatal.meta <- perinatal.meta[!perinatal.meta$TEC.Label %in% c("ILC-like (14)", "ILC-like (17)", "ILC-like (9)"), ]
 chat.milo <- perinatal.milo
 # need to filter out a couple of problematic genes
 rowData(chat.milo) <- gene.df[rownames(chat.milo), ]
 chat.milo <- chat.milo[!duplicated(rowData(chat.milo)$external_gene_name), ]
 chat.milo <- chat.milo[!is.na(rowData(chat.milo)$external_gene_name), ]
 rownames(chat.milo) <- rowData(chat.milo)$external_gene_name
+chat.milo <- chat.milo[, !colData(chat.milo)$Nhood.TEC %in% c("ILC-like (14)", "ILC-like (17)", "ILC-like (9)")]
+
+n.groups <- length(unique(colData(chat.milo)$Nhood.TEC))
+samp.cols <- colorRampPalette(pal_d3("category20")(20))(n.groups)
+names(samp.cols) <- unique(colData(chat.milo)$Nhood.TEC)
+
 itec.chat <- createCellChat(chat.milo, group.by='Nhood.TEC')
 ```
 
@@ -302,11 +316,17 @@ plot.paths <- names(out.deg)[out.deg > 1e-4]
 ```
 
 
-```{r, fig.width=12, fig.height=15}
+```{r, fig.width=12, fig.height=17}
 # Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
-ht1 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths,  pattern = "outgoing", color.use=samp.cols, width=11, height=14)
-ht2 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths, pattern = "incoming", color.use=samp.cols, width=12, height=15)
+ht1 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths,  pattern = "outgoing", color.use=samp.cols, width=12, height=17)
+ht2 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths, pattern = "incoming", color.use=samp.cols, width=12, height=17)
 # ht1 + ht2
+
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_allPathways-heatmap.png",
+    height=17, width=12, res=600, units="in")
+ht2
+dev.off()
+
 ht2
 ```
 
@@ -324,11 +344,11 @@ We first want to identify how many coordinated outgoing signal patterns there ar
 selectK(itec.chat, pattern = "outgoing")
 ```
 
-The dip in the cophenetic and silhouette scores at 4 indicates we should select 3 modules/patterns.
+The dip in the cophenetic and silhouette scores at 5 indicates we should select 4 modules/patterns.
 
-```{r, fig.height=9, fig.width=12, warning=FALSE}
-k.mod <- 3
-itec.chat <- identifyCommunicationPatterns(itec.chat, slot.name="netP", pattern = "outgoing", k = k.mod, heatmap.show=TRUE, height=21)
+```{r, fig.height=11, fig.width=12, warning=FALSE}
+k.mod <- 4
+itec.chat <- identifyCommunicationPatterns(itec.chat, slot.name="netP", pattern = "outgoing", k = k.mod, heatmap.show=TRUE, height=19)
 ```
 
 Pattern 1 encompases many of the intertypical TEC states, pattern 2 are the mTEC (and ILC-like), and pattern 3 capture most of the cTEC states. It's hard to visualise the 
@@ -346,6 +366,172 @@ netAnalysis_dot(itec.chat, pattern = "outgoing")
 
 mTEC (5) are secretors of HH ligands which could be important for thymocyte development.
 
+```{r}
+itec.outgoing.cells <- dcast(formula=CellGroup ~ Pattern, value.var = "Contribution", data=itec.chat@netP$pattern$outgoing$pattern$cell)
+itec.outgoing.path <- dcast(formula=Signaling ~ Pattern, value.var="Contribution", data=itec.chat@netP$pattern$outgoing$pattern$signaling)
+```
+
+
+```{r}
+# for each module what are the top 5 pathways?
+top.mod.list <- list()
+for(x in seq_len(k.mod)){
+  k.con <- itec.outgoing.path[, x+1]
+  names(k.con) <- itec.outgoing.path$Signaling
+  top.mod.list[[paste0("Module", x)]] <- names(k.con[order(k.con, decreasing = TRUE)][1:5])
+}
+
+top.mod.df <- do.call(cbind.data.frame, top.mod.list)
+colnames(top.mod.df) <- paste0("Module", c(1:k.mod))
+top.mod.df
+```
+
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=6, fig.width=9}
+ht_opt$message = FALSE
+hm.vals <- as.matrix(itec.outgoing.cells[, -1])
+rownames(hm.vals) <- itec.outgoing.cells$CellGroup
+colnames(hm.vals) <- paste0("Module", c(1:ncol(hm.vals)))
+
+# hm.cols <- viridis(n=20, option='magma')
+exp.quants <- quantile(hm.vals, c(0.01, 0.99))
+hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "red"))
+
+annot.df <- data.frame("TECGroup"=itec.outgoing.cells$CellGroup)
+rownames(annot.df) <- annot.df$TECGroup
+col.order <- order(annot.df$TECGroup)
+# col.order <- order(annot.df$TECGroup)
+
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
+                               which="column",
+                               show_legend=FALSE,
+                               gp=gpar(fontsize=14),
+                               col=list("TECGroup"=samp.cols))
+ht_opt$heatmap_row_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_column_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_row_title_gp = gpar(fontsize = 14)
+ht_opt$legend_title_gp = gpar(fontsize = 14)
+
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Outgoing_NMF-heatmap.png",
+    height=6, width=9, res=300, units="in")
+outgoing.ht.plot <- Heatmap(t(hm.vals[col.order, ]), col=hm.cols,
+                            use_raster=TRUE, cluster_rows=FALSE,
+                            heatmap_legend_param=list(title="Outgoing", direction="horizontal"),
+                            show_column_names=TRUE, cluster_columns=TRUE,
+                            show_row_names=TRUE, height=ncol(hm.vals)*unit(5, "mm"), 
+                            top_annotation = col.annot)
+draw(outgoing.ht.plot,  heatmap_legend_side="top")
+dev.off()
+
+
+outgoing.ht.plot <- Heatmap(t(hm.vals[col.order,]), col=hm.cols,
+                            use_raster=TRUE, cluster_rows=FALSE,
+                            heatmap_legend_param=list(title="Outgoing", direction="horizontal"),
+                            show_column_names=TRUE, cluster_columns=TRUE,
+                            show_row_names=TRUE, height=ncol(hm.vals)*unit(5, "mm"), 
+                            top_annotation=col.annot)
+draw(outgoing.ht.plot, heatmap_legend_side="top")
+```
+
+I should group these different pathways to highlight secreted and physical interactions, e.g. adhesion molecules, Notch-Dll, etc. This will be based on whether the receptor or 
+ligand is membrane bound or secreted.
+
+```{r}
+path.db <- itec.chat@DB$interaction
+path.annot.list <- list("Physical"=intersect(path.db[path.db$annotation %in% c("Cell-Cell Contact"), ]$pathway_name, itec.chat@netP$pathways),
+                        "ECM"=intersect(path.db[path.db$annotation %in% c("ECM-Receptor"), ]$pathway_name, itec.chat@netP$pathways),
+                        "Secreted"=intersect(path.db[path.db$annotation %in% c("Secreted Signaling"), ]$pathway_name, itec.chat@netP$pathways))
+path.annot.df <- do.call(cbind.data.frame, list(unlist(path.annot.list)))
+colnames(path.annot.df) <- c("Pathway")
+path.annot.df$Annotation <- gsub(x = rownames(path.annot.df), pattern="([A-Za-z]+)([0-9]+)", replacement="\\1")
+path.annot.df <- path.annot.df[!duplicated(path.annot.df$Pathway), ]
+rownames(path.annot.df) <- path.annot.df$Pathway
+path.annot.df <- path.annot.df[, -1, drop=FALSE]
+
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=16, fig.width=5}
+ht_opt$message = FALSE
+hm.vals <- as.matrix(itec.outgoing.path[, -1])
+rownames(hm.vals) <- itec.outgoing.path$Signaling
+colnames(hm.vals) <- paste0("Module", c(1:ncol(hm.vals)))
+
+# hm.cols <- viridis(n=20, option='magma')
+exp.quants <- quantile(hm.vals, c(0.01, 0.99))
+hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "red"))
+
+annot.cols <- c("darkgreen", "darkorange", "skyblue")
+names(annot.cols) <- c("Physical", "ECM", "Secreted")
+row.annot <- rowAnnotation(df=path.annot.df, show_legend=TRUE,
+                           gp=gpar(fontsize=14),
+                           col=list("Annotation"=annot.cols))
+ht_opt$heatmap_row_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_column_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_row_title_gp = gpar(fontsize = 14)
+ht_opt$legend_title_gp = gpar(fontsize = 14)
+
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Outgoing_NMF_Pathways-heatmap.png",
+    height=16, width=5, res=300, units="in")
+outgoing.pathway.ht.plot <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
+                   use_raster=TRUE, cluster_rows=TRUE,
+                   row_split=path.annot.df$Annotation,
+                   heatmap_legend_param=list(title="Outgoing", direction="horizontal"),
+                   show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
+                   show_row_names=TRUE, left_annotation=row.annot)
+draw(outgoing.pathway.ht.plot,  heatmap_legend_side="top")
+dev.off()
+
+
+outgoing.pathway.ht.plot <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
+              use_raster=TRUE, cluster_rows=TRUE,
+              row_split=path.annot.df$Annotation,
+              heatmap_legend_param=list(title="Outgoing", direction="horizontal"),
+              show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
+              show_row_names=TRUE, left_annotation=row.annot)
+draw(outgoing.pathway.ht.plot, heatmap_legend_side="top")
+```
+
+
+```{r, fig.height=3, fig.width=8}
+# scale then censor the contributions < 0.5 - only use module 4
+w.norm <- apply(itec.outgoing.path[, "Pattern 1", drop=FALSE], 2, FUN=function(RX) RX/max(RX))
+w.norm[w.norm < 0.1] <- 0
+h.norm <- apply(itec.outgoing.cells[, "Pattern 1", drop=FALSE], 2, FUN=function(CX) CX/max(CX))
+h.norm[h.norm < 0.1] <- 0
+
+ly6d.contr.df <- as.data.frame(w.norm %*% t(h.norm))
+rownames(ly6d.contr.df) <- itec.outgoing.path$Signaling
+colnames(ly6d.contr.df) <- itec.outgoing.cells$CellGroup
+ly6d.contr.df$Pathway <- itec.outgoing.path$Signaling
+ly6d.contr.melt <- melt(ly6d.contr.df, id.vars="Pathway")
+colnames(ly6d.contr.melt) <- c("Pathway", "TECtype", "Contribution")
+ly6d.contr.melt$TECtype <- as.character(ly6d.contr.melt$TECtype)
+ly6d.contr.melt$Pathway <- as.character(ly6d.contr.melt$Pathway)
+
+ggplot(ly6d.contr.melt[ly6d.contr.melt$TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") &
+                         ly6d.contr.melt$Contribution > 0 & 
+                         ly6d.contr.melt$Pathway %in% rownames(path.annot.df[path.annot.df$Annotation %in% c("Secreted"), ,drop=FALSE]), ],
+       aes(x=TECtype, y=reorder(Pathway, Contribution), size=Contribution, fill=TECtype)) +
+  geom_point(shape=21, show.legend=FALSE) +
+  theme_cowplot() +
+  scale_fill_manual(values=samp.cols) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1,
+                                 family="Roboto"),
+        axis.text=element_text(family="Roboto", size=14),
+        axis.title=element_text(family="Roboto", size=16)) +
+  labs(x="TEC group", y="Pathway") +
+  coord_flip() +
+  NULL
+
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_Ly6d-OutgoingPathwayContribution-bubble.png",
+       height=3, width=8, dpi=300, bg='white')
+```
+
+
+
 ### Incoming signal (receptor expression)
 
 Now identify how many coordinated incoming/received signal patterns there are using non-negative matrix factorisation of the communication network edges.
@@ -360,6 +546,7 @@ The dip in the cophenetic and silhouette scores at 4 indicates we should select 
 k.mod <- 4
 itec.chat <- identifyCommunicationPatterns(itec.chat, slot.name="netP", pattern = "incoming", k = k.mod, heatmap.show=TRUE, height=21)
 ```
+
 
 ```{r}
 itec.incoming.cells <- dcast(formula=CellGroup ~ Pattern, value.var = "Contribution", data=itec.chat@netP$pattern$incoming$pattern$cell)
@@ -384,7 +571,7 @@ top.mod.df
 
 
 
-```{r, warning=FALSE, message=FALSE, fig.height=6, fig.width=6}
+```{r, warning=FALSE, message=FALSE, fig.height=6, fig.width=9}
 ht_opt$message = FALSE
 hm.vals <- as.matrix(itec.incoming.cells[, -1])
 rownames(hm.vals) <- itec.incoming.cells$CellGroup
@@ -399,30 +586,38 @@ rownames(annot.df) <- annot.df$TECGroup
 col.order <- order(annot.df$TECGroup)
 # col.order <- order(annot.df$TECGroup)
 
-col.annot <- rowAnnotation(df=annot.df[col.order, , drop=FALSE],
-                           show_legend=FALSE,
-                           col=list("TECGroup"=samp.cols))
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
+                               which="column",
+                               gp=gpar(fontsize=14),
+                               show_legend=FALSE,
+                               col=list("TECGroup"=samp.cols))
 ht_opt$heatmap_row_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_column_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_row_title_gp = gpar(fontsize = 14)
+ht_opt$legend_title_gp = gpar(fontsize = 14)
 
-png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Incoming_NMF-heatmap.png",
-    height=9, width=6, res=300, units="in")
-ht.plot <- Heatmap(hm.vals[col.order, ], col=hm.cols,
-        use_raster=TRUE, cluster_rows=TRUE,
-        heatmap_legend_param=list(title="Contribution", direction="horizontal"),
-        show_column_names=TRUE, cluster_columns=FALSE,
-        show_row_names=TRUE, width=ncol(hm.vals)*unit(5, "mm"), 
-        left_annotation = col.annot)
-draw(ht.plot,  heatmap_legend_side="top")
+
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Incoming_NMF-heatmap.png",
+    height=6, width=9, res=900, units="in")
+incoming.ht.plot <- Heatmap(t(hm.vals[col.order, ]), col=hm.cols,
+                            name="Incoming",
+                            use_raster=TRUE, cluster_rows=FALSE,
+                            heatmap_legend_param=list(title="Incoming", direction="horizontal"),
+                            show_column_names=TRUE, cluster_columns=TRUE,
+                            show_row_names=TRUE, height=ncol(hm.vals)*unit(5, "mm"), 
+                            top_annotation = col.annot)
+draw(incoming.ht.plot,  heatmap_legend_side="top")
 dev.off()
 
 
-ht <- Heatmap(hm.vals[col.order,], col=hm.cols,
-              use_raster=TRUE, cluster_rows=TRUE,
-              heatmap_legend_param=list(title="Contribution", direction="horizontal"),
-              show_column_names=TRUE, cluster_columns=FALSE,
-              show_row_names=TRUE, width=ncol(hm.vals)*unit(5, "mm"), 
-              left_annotation=col.annot)
-draw(ht, heatmap_legend_side="top")
+incoming.ht.plot <- Heatmap(t(hm.vals[col.order,]), col=hm.cols,
+                            name="Incoming",
+                            use_raster=TRUE, cluster_rows=FALSE,
+                            heatmap_legend_param=list(title="Incoming", direction="horizontal"),
+                            show_column_names=TRUE, cluster_columns=TRUE,
+                            show_row_names=TRUE, height=ncol(hm.vals)*unit(5, "mm"), 
+                            top_annotation=col.annot)
+draw(incoming.ht.plot, heatmap_legend_side="top")
 ```
 
 I should group these different pathways to highlight secreted and physical interactions, e.g. adhesion molecules, Notch-Dll, etc. This will be based on whether the receptor or 
@@ -436,9 +631,9 @@ path.annot.list <- list("Physical"=intersect(path.db[path.db$annotation %in% c("
 path.annot.df <- do.call(cbind.data.frame, list(unlist(path.annot.list)))
 colnames(path.annot.df) <- c("Pathway")
 path.annot.df$Annotation <- gsub(x = rownames(path.annot.df), pattern="([A-Za-z]+)([0-9]+)", replacement="\\1")
+path.annot.df <- path.annot.df[!duplicated(path.annot.df$Pathway), ]
 rownames(path.annot.df) <- path.annot.df$Pathway
 path.annot.df <- path.annot.df[, -1, drop=FALSE]
-
 ```
 
 
@@ -455,36 +650,44 @@ hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyello
 annot.cols <- c("darkgreen", "darkorange", "skyblue")
 names(annot.cols) <- c("Physical", "ECM", "Secreted")
 row.annot <- rowAnnotation(df=path.annot.df, show_legend=TRUE,
+                           gp=gpar(fontize=14),
                            col=list("Annotation"=annot.cols))
 
-png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Incoming_NMF_Pathways-heatmap.png",
-    height=16, width=5, res=300, units="in")
-ht.plot <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
-                   use_raster=TRUE, cluster_rows=TRUE,
-                   row_split=path.annot.df$Annotation,
-                   heatmap_legend_param=list(title="Contribution", direction="horizontal"),
-                   show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
-                   show_row_names=TRUE, left_annotation=row.annot)
-draw(ht.plot,  heatmap_legend_side="top")
+ht_opt$heatmap_row_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_column_names_gp = gpar(fontsize = 14)
+ht_opt$heatmap_row_title_gp = gpar(fontsize = 14)
+ht_opt$legend_title_gp = gpar(fontsize = 14)
+
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Incoming_NMF_Pathways-heatmap.png",
+    height=16, width=5, res=900, units="in")
+incoming.pathway.ht.plot <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
+                                    name="Incoming",
+                                    use_raster=TRUE, cluster_rows=TRUE,
+                                    row_split=path.annot.df$Annotation,
+                                    heatmap_legend_param=list(title="Incoming", direction="horizontal"),
+                                    show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
+                                    show_row_names=TRUE, left_annotation=row.annot)
+draw(incoming.pathway.ht.plot,  heatmap_legend_side="top")
 dev.off()
 
 
-ht <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
-              use_raster=TRUE, cluster_rows=TRUE,
-              row_split=path.annot.df$Annotation,
-              heatmap_legend_param=list(title="Contribution", direction="horizontal"),
-              show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
-              show_row_names=TRUE, left_annotation=row.annot)
-draw(ht, heatmap_legend_side="top")
+incoming.pathway.ht.plot <- Heatmap(hm.vals[rownames(path.annot.df), ], col=hm.cols,
+                                    name="Incoming",
+                                    use_raster=TRUE, cluster_rows=TRUE,
+                                    row_split=path.annot.df$Annotation,
+                                    heatmap_legend_param=list(title="Incoming", direction="horizontal"),
+                                    show_column_names=TRUE, cluster_columns=FALSE, width=ncol(hm.vals)*unit(7, "mm"), 
+                                    show_row_names=TRUE, left_annotation=row.annot)
+draw(incoming.pathway.ht.plot, heatmap_legend_side="top")
 ```
 
 Visualise in a bubble plot.
 
 ```{r, fig.height=3, fig.width=8}
 # scale then censor the contributions < 0.5 - only use module 4
-w.norm <- apply(itec.incoming.path[, "Pattern 3", drop=FALSE], 2, FUN=function(RX) RX/max(RX))
+w.norm <- apply(itec.incoming.path[, "Pattern 1", drop=FALSE], 2, FUN=function(RX) RX/max(RX))
 w.norm[w.norm < 0.1] <- 0
-h.norm <- apply(itec.incoming.cells[, "Pattern 3", drop=FALSE], 2, FUN=function(CX) CX/max(CX))
+h.norm <- apply(itec.incoming.cells[, "Pattern 1", drop=FALSE], 2, FUN=function(CX) CX/max(CX))
 h.norm[h.norm < 0.1] <- 0
 
 ly6d.contr.df <- as.data.frame(w.norm %*% t(h.norm))
@@ -511,14 +714,14 @@ ggplot(ly6d.contr.melt[ly6d.contr.melt$TECtype %in% c("Ly6d+ Intertypical TEC (4
   coord_flip() +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_Ly6d-PathwayContribution-bubble.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_Ly6d-IncomingPathwayContribution-bubble.png",
        height=3, width=8, dpi=300, bg='white')
 ```
 
 This is still a lot of pathways to investigate - these are just the secreted ones. Which of these have ligands or receptors that are DE between Ly6d+/- Intertypical TEC?
 
 ```{r}
-ly6d.dge <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Ly6d_DEGs.tsv",
+ly6d.dge <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_Ly6d_DEGs.tsv",
                        sep="\t", header=TRUE, stringsAsFactors=FALSE)
 sig.paths <- ly6d.contr.melt[ly6d.contr.melt$TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") &
                          ly6d.contr.melt$Contribution > 0 & 
@@ -546,27 +749,29 @@ max.x <- max(abs(ly6d.dge$logFC))
 eps.x <- max.x*0.1
 
 ggplot(ly6d.dge, aes(x=logFC, y=-log10(FDR), colour=FDR < 0.1)) +
-  annotate("text", x=-2, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d- Intertypical TEC") +
+  annotate("text", x=-2, y=25, family="Roboto", size=5, fontface="bold", label="Ly6d- Intertypical TEC") +
   annotate("segment", x=-2, xend=-4, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
   
-  annotate("text", x=3, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d+ Intertypical TEC") +
+  annotate("text", x=3, y=25, family="Roboto", size=5, fontface="bold", label="Ly6d+ Intertypical TEC") +
   annotate("segment", x=3, xend=5, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
   geom_point(alpha=0.1) +
   geom_point(data=ly6d.dge[ly6d.dge$external_gene_name %in% de.mod3.receptors, ], colour="purple", shape=18, size=3) +
   theme_cowplot() +
   geom_label_repel(aes(label=Label), colour="black",
                    max.overlaps=Inf,
-                   size=4, family="Roboto",
+                   size=5, family="Roboto",
                    force=20, force_pull=10) +
   scale_colour_manual(values=c("TRUE"="red3", "FALSE"="black"), breaks=c("TRUE", "FALSE")) +
   guides(colour=guide_legend(title="DGE 10% FDR", override.aes=list(shape=15, size=4, alpha=1))) +
   labs(x="log Fold Change", y=expression(paste("-log"[10], " FDR"))) +
   scale_x_continuous(limits=c(-max.x-eps.x, max.x+eps.x)) +
-  theme(axis.text=element_text(size=14, face="bold", family="Roboto"),
-        axis.title=element_text(size=14, face="bold", family="Roboto")) +
+  theme(axis.text=element_text(size=18, face="bold", family="Roboto"),
+        axis.title=element_text(size=18, face="bold", family="Roboto"),
+        legend.text=element_text(size=18, family="Roboto"),
+        legend.title=element_text(size=18, family="Roboto")) +
   NULL
   
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-CellChat_receptors-volcano.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-CellChat_receptors-volcano.png",
        height=5, width=8, dpi=300, bg='white')
 ```
 
@@ -581,27 +786,29 @@ max.x <- max(abs(ly6d.dge$logFC))
 eps.x <- max.x*0.1
 
 ggplot(ly6d.dge, aes(x=logFC, y=-log10(FDR), colour=FDR < 0.1)) +
-  annotate("text", x=-2, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d- Intertypical TEC") +
+  annotate("text", x=-2, y=25, family="Roboto", size=5, fontface="bold", label="Ly6d- Intertypical TEC") +
   annotate("segment", x=-2, xend=-4, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
   
-  annotate("text", x=3, y=25, family="Roboto", size=4, fontface="bold", label="Ly6d+ Intertypical TEC") +
+  annotate("text", x=3, y=25, family="Roboto", size=5, fontface="bold", label="Ly6d+ Intertypical TEC") +
   annotate("segment", x=3, xend=5, y=23, yend=23, arrow=arrow(), colour='grey80', linewidth=2) +
   geom_point(alpha=0.1) +
   geom_point(data=ly6d.dge[ly6d.dge$external_gene_name %in% de.mod3.ligands, ], colour="purple", shape=18, size=3) +
   theme_cowplot() +
   geom_label_repel(aes(label=Label), colour="black",
                    max.overlaps=Inf,
-                   size=4, family="Roboto",
+                   size=5, family="Roboto",
                    force=20, force_pull=10) +
   scale_colour_manual(values=c("TRUE"="red3", "FALSE"="black"), breaks=c("TRUE", "FALSE")) +
   guides(colour=guide_legend(title="DGE 10% FDR", override.aes=list(shape=15, size=4, alpha=1))) +
   labs(x="log Fold Change", y=expression(paste("-log"[10], " FDR"))) +
   scale_x_continuous(limits=c(-max.x-eps.x, max.x+eps.x)) +
-  theme(axis.text=element_text(size=14, face="bold", family="Roboto"),
-        axis.title=element_text(size=14, face="bold", family="Roboto")) +
+  theme(axis.text=element_text(size=18, face="bold", family="Roboto"),
+        axis.title=element_text(size=18, face="bold", family="Roboto"),
+        legend.text=element_text(size=18, family="Roboto"),
+        legend.title=element_text(size=18, family="Roboto")) +
   NULL
   
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-CellChat_ligands-volcano.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-CellChat_ligands-volcano.png",
        height=5, width=8, dpi=300, bg='white')
 ```
 
@@ -611,7 +818,7 @@ These are the DE ligands between Ly6d+/- Intertypical TEC.
 
 ```{r, fig.height=18}
 #par(mfrow=c(1,1))
-png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_FGF-ChordAgg.png",
+png(file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_FGF-ChordAgg.png",
     height=18, width=18, units="in", res=300)
 netVisual_aggregate(itec.chat, signaling = "FGF", layout = "chord", vertex.label.cex=1.25, pt.title=20)
 dev.off()
@@ -621,7 +828,7 @@ netVisual_aggregate(itec.chat, signaling = "FGF", layout = "chord", vertex.label
 
 ```{r, fig.height=18}
 #par(mfrow=c(1,1))
-png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_WNT-ChordAgg.png",
+png(file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_WNT-ChordAgg.png",
     height=18, width=18, units="in", res=300)
 netVisual_aggregate(itec.chat, signaling = "WNT", layout = "chord", vertex.label.cex=1.25, pt.title=20)
 dev.off()
@@ -632,7 +839,7 @@ netVisual_aggregate(itec.chat, signaling = "WNT", layout = "chord", vertex.label
 
 ```{r, fig.height=18}
 #par(mfrow=c(1,1))
-png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-ChordAgg.png",
+png(file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-ChordAgg.png",
     height=18, width=18, units="in", res=300)
 netVisual_aggregate(itec.chat, signaling = "BMP", layout = "chord", vertex.label.cex=1.25, pt.title=20)
 dev.off()
@@ -644,7 +851,7 @@ Let's take a look at the pathways that differ between the two pTEC states.
 
 ```{r, fig.height=18}
 #par(mfrow=c(1,1))
-png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_IGF-ChordAgg.png",
+png(file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_IGF-ChordAgg.png",
     height=18, width=18, units="in", res=300)
 netVisual_aggregate(itec.chat, signaling = "IGF", layout = "chord", vertex.label.cex=1.25, pt.title=20)
 dev.off()
@@ -674,7 +881,7 @@ ggplot(galectin.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-JAM_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-JAM_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -705,7 +912,7 @@ ggplot(galectin.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GALECTIN_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GALECTIN_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -739,7 +946,7 @@ ggplot(grn.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GRN_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GRN_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -773,7 +980,7 @@ ggplot(ccl.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-CCL_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-CCL_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -810,7 +1017,7 @@ ggplot(cadm.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-CADM_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-CADM_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -843,7 +1050,7 @@ ggplot(epha.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-EPHA_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-EPHA_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -878,7 +1085,7 @@ ggplot(mpz.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-MPZ_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-MPZ_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -912,7 +1119,7 @@ ggplot(nrxn.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-NRXN_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-NRXN_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -947,7 +1154,7 @@ ggplot(slurp.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-SLURP_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-SLURP_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -981,7 +1188,7 @@ ggplot(activin.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-ACTIVIN_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-ACTIVIN_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -1013,7 +1220,7 @@ ggplot(fgf.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-FGF_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-FGF_contribution.png",
        height=2.5, width=6, dpi=300, bg='white')
 ```
 
@@ -1065,7 +1272,7 @@ ggplot(fgf.plot.df[fgf.plot.df$variable %in% fgf.receptors, ],
   # theme(axis.text.x=element_blank()) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Fgfr-violin.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Fgfr-violin.png",
        height=7, width=12, dpi=300, bg='white')
 ```
 
@@ -1090,7 +1297,7 @@ ggplot(fgf.plot.df[fgf.plot.df$variable %in% fgf.ligands, ],
   # theme(axis.text.x=element_blank()) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Fgfligand-violin.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Fgfligand-violin.png",
        height=12, width=12, dpi=300, bg='white')
 ```
 
@@ -1115,7 +1322,7 @@ ggplot(ocln.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-OCLN_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-OCLN_contribution.png",
        height=2.5, width=6, dpi=300, bg='white')
 ```
 
@@ -1141,7 +1348,7 @@ ggplot(angpt.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-ANGPT_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-ANGPT_contribution.png",
        height=2.5, width=6, dpi=300, bg='white')
 ```
 
@@ -1166,7 +1373,7 @@ ggplot(pros.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-PRPS_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-PRPS_contribution.png",
        height=2.5, width=6, dpi=300, bg='white')
 ```
 
@@ -1195,7 +1402,7 @@ ggplot(gas.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GAS_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-GAS_contribution.png",
        height=2.5, width=6, dpi=300, bg='white')
 ```
 
@@ -1227,7 +1434,7 @@ ggplot(bmp.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-BMP_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-BMP_contribution.png",
        height=2.5, width=6, dpi=300, bg='white')
 ```
 
@@ -1242,7 +1449,7 @@ netVisual_bubble(itec.chat, remove.isolate = FALSE, thresh=0.01, signaling=pathw
 This indicates Ly6d- Intertypical TEC are responsive to BMP signals. Are there any cell types that are more likely to act as senders or receivers?
 
 ```{r, fig.height=5, fig.width=15}
-png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-Centrality.png",
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-Centrality.png",
     height=6.5, width=16.5, res=300, units="in")
 # Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
 netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 16, height = 6, font.size = 14, color.use=samp.cols,
@@ -1274,7 +1481,7 @@ Is a chord or hierarchy plot useful here? One for the aggregated pathway.
 
 ```{r, fig.height=18}
 #par(mfrow=c(1,1))
-png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-ChordAgg.png",
+png(file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_BMP-ChordAgg.png",
     height=18, width=18, units="in", res=300)
 netVisual_aggregate(itec.chat, signaling = pathways.show, layout = "chord", vertex.label.cex=1.25, pt.title=20)
 dev.off()
@@ -1294,6 +1501,11 @@ pairLR.CXCL <- extractEnrichedLR(itec.chat, signaling = pathways.show, geneLR.re
 LR.show <- pairLR.CXCL[order(bmp.imp.data$contribution, decreasing = FALSE), ,drop=FALSE][1, ] # select the L-R pair with the highest contribution
 
 netVisual_individual(itec.chat, signaling = pathways.show, pairLR.use = LR.show, layout = "chord")
+```
+
+
+```{r}
+plotGeneExpression(itec.chat, signaling = "BMP")
 ```
 
 
@@ -1319,7 +1531,7 @@ ggplot(wnt.imp.data[wnt.imp.data$contribution >= 0.01, ], aes(x=contribution, y=
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-WNT_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-WNT_contribution.png",
        height=5, width=6, dpi=300, bg='white')
 ```
 
@@ -1387,7 +1599,7 @@ ggplot(wnt.plot.df[wnt.plot.df$variable %in% c("Fzd2", "Fzd3", "Fzd4", "Lrp6"), 
   # theme(axis.text.x=element_blank()) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntreceptors-violin.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntreceptors-violin.png",
        height=7, width=12, dpi=300, bg='white')
 ```
 
@@ -1413,7 +1625,7 @@ ggplot(wnt.plot.df[wnt.plot.df$variable %in% c("Fzd2", "Fzd3", "Fzd4", "Lrp6"), 
   # theme(axis.text.x=element_blank()) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntreceptors_LEGEND-violin.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntreceptors_LEGEND-violin.png",
        height=7, width=14, dpi=300, bg='white')
 ```
 
@@ -1437,7 +1649,7 @@ ggplot(wnt.plot.df[wnt.plot.df$variable %in% wnt.ligands, ],
   # theme(axis.text.x=element_blank()) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntligand-violin.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntligand-violin.png",
        height=12, width=12, dpi=300, bg='white')
 ```
 
@@ -1445,7 +1657,7 @@ ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-Wntliga
 
 
 ```{r, fig.height=6, fig.width=16}
-png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_WNT-Centrality.png",
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_WNT-Centrality.png",
     height=6.5, width=16.5, res=300, units="in")
 # Visualize the computed centrality scores using heatmap, allowing ready identification of major signaling roles of cell groups
 netAnalysis_signalingRole_network(itec.chat, signaling = pathways.show, width = 16, height = 6, font.size = 14, color.use=samp.cols,
@@ -1472,7 +1684,7 @@ cTEC are both senders and receivers while Immature mTEC tend to be senders of Wn
 
 ```{r, fig.height=18}
 #par(mfrow=c(1,1))
-png(file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_Wnt-ChordAgg.png",
+png(file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat_Wnt-ChordAgg.png",
     height=18, width=18, units="in", res=300)
 netVisual_aggregate(itec.chat, signaling = pathways.show, layout = "chord", vertex.label.cex=1.25, pt.title=20)
 dev.off()
@@ -1686,7 +1898,7 @@ ggplot(trail.imp.data, aes(x=contribution, y=reorder(name, contribution))) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-TRAIL_contribution.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Perinatal_CellChat-TRAIL_contribution.png",
        height=4, width=6, dpi=300, bg='white')
 ```
 
@@ -1697,7 +1909,8 @@ plotGeneExpression(itec.chat, signaling = "TRAIL")
 ```
 
 _Tnfsf10_ is highly expressed in the Ly6d+ Intertypical TEC, indicating it is a strong sender of TRAIL signalling. Why would a progenitor be a source of a ligand that induces 
-apoptosis?
+apoptosis? Are these cells signalling to Aire+ mTEC, or to other un-observed cells. Michel _et al_. suggest immature mTEC and more apoptotic than mature progeny - is this a 
+mechanism for this? Could it be a mechanism to prevent over-filling of the medulla?
 
 We can visualise these ligand-receptor pairs for all cell types.
 
@@ -1818,8 +2031,176 @@ ggplot(igf.plot.df[igf.plot.df$variable %in% c("Itga6", "Itgb1", "Igf1", "Igf1r"
   # theme(axis.text.x=element_blank()) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat-IGFreceptors-violin.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-IGFreceptors-violin.png",
        height=7, width=12, dpi=300, bg='white')
 ```
+
+## Plotting
+
+Make a simple heatmap of the pathways to highlight:
+
+* Wnt
+* Fgf
+* Bmp
+* Igf
+
+```{r}
+gene.list <- list("Wnt"=c("Fzd2", "Fzd3", "Fzd4", "Lrp6", "Wnt4", "Wnt6", "Wnt10a", "Wnt10b"),
+                  "Fgf"=c(fgf.receptors, fgf.ligands),
+                  "Bmp"=c("Bmp2", "Bmp7", "Bmpr1a", "Acvr2a", "Bmpr2"),
+                  "Igf"=c("Igf1", "Igf1r", "Itga6", "Itgb1"))
+lr.list <- c("Ligand"=c("Wnt4", "Wnt6", "Wnt10a", "Wnt10b", fgf.ligands, "Bmp2", "Bmp7", "Igf1", "Itga6", "Itgb1"),
+             "Receptor"=c("Fzd2", "Fzd3", "Fzd4", "Lrp6", fgf.receptors, "Bmpr1a", "Acvr2a", "Bmpr2", "Igf1r"))
+```
+
+
+```{r}
+# rowscale the expression
+cci.plot.exprs <- logcounts(chat.milo[rownames(chat.milo) %in% unlist(gene.list), ])
+# remove non-expressed genes
+min.mean <- 0.05
+cci.plot.exprs <- as.data.frame(t(cci.plot.exprs[rowMeans2(cci.plot.exprs) > min.mean, ]))
+# cci.plot.exprs <- as.data.frame(scale(t(cci.plot.exprs), center=TRUE, scale=TRUE))
+
+# colnames(igf.exprs) <- gene.df[colnames(igf.exprs), ]$external_gene_name
+cci.plot.exprs$CellID <- colnames(chat.milo)
+chat.meta <- colData(chat.milo)
+chat.meta$CellID <- colnames(chat.milo)
+
+cci.plot.meta <- merge(cci.plot.exprs, as.data.frame(chat.meta), by='CellID')
+```
+
+Plot the average expression as a heatmap.
+
+```{r}
+cci.plot.exprs <- as.matrix(cci.plot.exprs[, !colnames(cci.plot.exprs) %in% c("CellID")])
+clust.matrix <- model.matrix( ~ 0 + Nhood.TEC, data=cci.plot.meta)
+cci.ave.mat <- t(cci.plot.exprs) %*% clust.matrix
+colnames(cci.ave.mat) <- gsub(colnames(cci.ave.mat), pattern="Nhood\\.TEC", replacement="")
+cci.ave.mat <- as.data.frame(scale(t(cci.ave.mat), center=TRUE, scale=TRUE))
+```
+
+
+```{r}
+path.plot.df <- do.call(cbind.data.frame, list(unlist(gene.list)))
+colnames(path.plot.df) <- c("Pathway")
+path.plot.df$Annotation <- gsub(x = rownames(path.plot.df), pattern="([A-Za-z]+)([0-9]+)", replacement="\\1")
+path.plot.df <- path.plot.df[!duplicated(path.plot.df$Pathway), ]
+rownames(path.plot.df) <- path.plot.df$Pathway
+path.plot.df <- path.plot.df[, -1, drop=FALSE]
+
+lr.df <- do.call(cbind.data.frame, list(unlist(lr.list)))
+colnames(lr.df) <- c("Pathway")
+lr.df$Annotation <- gsub(x = rownames(lr.df), pattern="([A-Za-z]+)([0-9]+)", replacement="\\1")
+lr.df <- lr.df[!duplicated(lr.df$Pathway), ]
+rownames(lr.df) <- lr.df$Pathway
+lr.df <- lr.df[, -1, drop=FALSE]
+```
+
+
+```{r, fig.height=9, fig.width=8}
+ligand.cci.hm <- t(cci.ave.mat[, colnames(cci.ave.mat) %in% rownames(lr.df[lr.df$Annotation %in% c("Ligand"), , drop=FALSE]), drop=FALSE])
+
+annot.cols <- c("turquoise", "darkgreen", "firebrick", "skyblue")
+names(annot.cols) <- c("Wnt", "Bmp", "Fgf", "Igf")
+row.annot <- rowAnnotation(df=path.plot.df[rownames(path.plot.df) %in% rownames(ligand.cci.hm), , drop=FALSE],
+                           show_legend=FALSE,
+                           gp=gpar(fontize=18),
+                           show_annotation_name = FALSE,
+                           col=list("Annotation"=annot.cols))
+row.order <- rownames(path.plot.df[rownames(path.plot.df) %in% rownames(ligand.cci.hm), , drop=FALSE])
+
+annot.df <- data.frame("TECGroup"=unique(cci.plot.meta$Nhood.TEC))
+rownames(annot.df) <- annot.df$TECGroup
+col.order <- annot.df$TECGroup[order(annot.df$TECGroup)]
+
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
+                               which="column",
+                               show_legend=FALSE,
+                               gp=gpar(fontsize=18),
+                               show_annotation_name = FALSE,
+                               col=list("TECGroup"=samp.cols))
+ht_opt$heatmap_row_names_gp = gpar(fontsize = 18)
+ht_opt$heatmap_column_names_gp = gpar(fontsize = 18)
+ht_opt$heatmap_row_title_gp = gpar(fontsize = 18)
+ht_opt$legend_title_gp = gpar(fontsize = 18)
+
+max.y <- quantile(as.vector(as.matrix(cci.ave.mat)), c(0.01, 0.99))
+hm.cols <- colorRamp2(c(-max.y[2], 0, max.y[2]), c("orange", "lightyellow", "purple"))
+
+
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-PathwaysHighlight-Ligands-heatmap.png",
+    height=9, width=8, res=900, units="in")
+ligand.plot.ht <- Heatmap(ligand.cci.hm[row.order, col.order], col=hm.cols, top_annotation=col.annot,
+                        left_annotation=row.annot,
+                        use_raster=TRUE, 
+                        height=ncol(hm.vals)*unit(25, "mm"),
+                        show_column_names=FALSE,
+                        row_split=path.plot.df[rownames(path.plot.df) %in% rownames(ligand.cci.hm), , drop=FALSE]$Annotation,
+                        name="Z-score", cluster_columns=TRUE, cluster_rows=FALSE)
+draw(ligand.plot.ht)
+dev.off()
+
+draw(ligand.plot.ht)
+```
+
+
+
+```{r, fig.height=9, fig.width=8}
+receptor.cci.hm <- t(cci.ave.mat[, colnames(cci.ave.mat) %in% rownames(lr.df[lr.df$Annotation %in% c("Receptor"), , drop=FALSE]), drop=FALSE])
+
+annot.cols <- c("turquoise", "darkgreen", "firebrick", "skyblue")
+names(annot.cols) <- c("Wnt", "Bmp", "Fgf", "Igf")
+row.annot <- rowAnnotation(df=path.plot.df[rownames(path.plot.df) %in% rownames(receptor.cci.hm), , drop=FALSE],
+                           show_legend=FALSE,
+                           gp=gpar(fontize=18),
+                           show_annotation_name = FALSE,
+                           col=list("Annotation"=annot.cols))
+row.order <- rownames(path.plot.df[rownames(path.plot.df) %in% rownames(receptor.cci.hm), , drop=FALSE])
+
+annot.df <- data.frame("TECGroup"=unique(cci.plot.meta$Nhood.TEC))
+rownames(annot.df) <- annot.df$TECGroup
+col.order <- annot.df$TECGroup[order(annot.df$TECGroup)]
+
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
+                               which="column",
+                               show_legend=FALSE,
+                               gp=gpar(fontsize=18),
+                               show_annotation_name = FALSE,
+                               col=list("TECGroup"=samp.cols))
+ht_opt$heatmap_row_names_gp = gpar(fontsize = 18)
+ht_opt$heatmap_column_names_gp = gpar(fontsize = 18)
+ht_opt$heatmap_row_title_gp = gpar(fontsize = 18)
+ht_opt$legend_title_gp = gpar(fontsize = 18)
+
+max.y <- quantile(as.vector(as.matrix(cci.ave.mat)), c(0.01, 0.99))
+hm.cols <- colorRamp2(c(-max.y[2], 0, max.y[2]), c("orange", "lightyellow", "purple"))
+
+
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-PathwaysHighlight-Receptors-heatmap.png",
+    height=9, width=8, res=900, units="in")
+receptor.plot.ht <- Heatmap(receptor.cci.hm[row.order, col.order], col=hm.cols, top_annotation=col.annot,
+                        left_annotation=row.annot,
+                        use_raster=TRUE, 
+                        height=ncol(hm.vals)*unit(25, "mm"),
+                        show_column_names=FALSE,
+                        row_split=path.plot.df[rownames(path.plot.df) %in% rownames(receptor.cci.hm), , drop=FALSE]$Annotation,
+                        name="Z-score", cluster_columns=TRUE, cluster_rows=FALSE)
+draw(receptor.plot.ht)
+dev.off()
+
+draw(receptor.plot.ht)
+```
+
+
+```{r, fig.height=3, fig.width=2}
+at.legend <- Legend(at = names(samp.cols), title = "TECGroup", legend_gp=gpar(fill=samp.cols), ncol=2)
+png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/CellChat-TECGroup-legend.png",
+    height=3, width=9, res=900, units="in")
+draw(at.legend)
+dev.off()
+```
+
+
 
 

@@ -103,7 +103,7 @@ The overlap between the MNN-based labels and the clustering isn't particularly c
 between TEC states. We can get a broad idea of which regions of the FR layout represent the different TEC states.
 
 ```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=9.15}
-goi <- c("Aire", "Psmb11", "Ly6a", "Ccl21a", "Cxcl12", "Krt5", "Krt80", "Avil", "Epcam",
+goi <- c("Aire", "Psmb11", "Ly6a", "Ccl21a", "Cxcl12", "Krt5", "Krt80", "Avil", "Epcam", 
          "Car8", "Cd52", "Cdk1", "Top2a", "Lifr", "Spink5", "Foxn1", "MHCI", "Ly6A", "CD24", "CD86")
 plot.list <- list()
 for(x in seq_along(goi)){
@@ -415,6 +415,7 @@ ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_ZsGreen-Nho
            height=5.25, width=6.95)
 ```
 
+
 ```{r}
 # add these nhood groups to the sorting fraction-specific results
 zsg.milo.compare.merge <- merge(zsg.milo.compare, perinatal.res[, c("Nhood", "NhoodGroup")], by='Nhood')
@@ -538,7 +539,7 @@ With these genes, and a few other canonical markers, we can assign broad TEC sta
 ```{r, warning=FALSE, message=FALSE, fig.height=14.15, fig.width=9.15}
 ht_opt$message = FALSE
 
-plus.genes <- c("Ccl21a", "Aire", "Cxcl12", "Psmb11", "Ptprc", "Itgax", "Itgam", "Ikzf2", "Cd40", "Lgr6", "Ly6a", "Ly6d", "Epcam")
+plus.genes <- c("Ccl21a", "Aire", "Cxcl12", "Psmb11", "Ptprc", "Itgax", "Itgam", "Ikzf2", "Cd40", "Lgr6", "Ly6a", "Ly6d", "Epcam", "Enpep")
 plus.ensembl <- gene.df[gene.df$external_gene_name %in% plus.genes, ]$ensembl_gene_id
 
 hm.exprs <- nhoodExpression(perinatal.milo)[c(plus.ensembl, unlist(specific.genes)), ]
