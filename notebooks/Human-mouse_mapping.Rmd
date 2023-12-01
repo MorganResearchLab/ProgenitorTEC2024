@@ -1,0 +1,1213 @@
+---
+title: "Human - Mouse TEC mapping"
+output: html_notebook
+---
+
+This notebook sets out the analysis and comparison of our mouse TEC and human TEC from different sources.
+
+```{r, warning=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+library(SingleCellExperiment)
+library(DropletUtils)
+library(batchelor)
+library(scuttle)
+library(scran)
+library(Seurat)
+library(SeuratDisk)
+library(Signac)
+library(igraph)
+library(ggrepel)
+library(ggrastr)
+library(ggalluvial)
+library(ggridges)
+library(umap)
+library(miloR)
+library(ggplot2)
+library(scattermore)
+library(scales)
+library(cowplot)
+library(ggsci)
+library(reshape2)
+library(ggthemes)
+library(biomaRt)
+library(viridis)
+library(stringr)
+library(MatrixGenerics)
+library(dplyr)
+library(enrichR)
+library(tidytext)
+library(zellkonverter)
+library(ggbeeswarm)
+library(UpSetR)
+library(kableExtra)
+library(knitr)})
+```
+
+# Ragazzini _et al_ human TEC
+
+```{r, warning=FALSE, message=FALSE}
+hs.biomaRt.connection <- useEnsembl("ensembl", dataset="hsapiens_gene_ensembl")
+
+hs.gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name"),
+                 mart=hs.biomaRt.connection)
+rownames(hs.gene.df) <- hs.gene.df$ensembl_gene_id
+```
+
+Recently [published data](https://doi.org/10.1016/j.devcel.2023.08.017) claims to identify a multi-potent stem cell population in the human thymus. The TEC were sorted separately in to 
+cTEC (CD205+EpCamlo) and mTEC (CD205-EpCam+) prior to 10X droplet scRNA-seq. The data are provided filtered.
+
+There is no accompanying meta-data available, so we will have to (a) request this from the authors, and/or (b) infer this from a clustering and marker genes.
+
+```{r}
+# data are in barcodes, features and separate count matrices
+ragazzini.geo <- "/Users/s08mm2/Dropbox/AgeingExperiment/Perinatal_manuscript/data/GSE220830_RAW/"
+raggazini.dirs <- list.dirs(ragazzini.geo, recursive = FALSE, full.names=TRUE)
+raggazini.sce.list <- list()
+
+for(x in seq_along(raggazini.dirs)){
+  x.dir <- raggazini.dirs[x]
+  x.samp <- gsub(x.dir, pattern="([[:ascii:]]*/)(GSM[0-9]+)_([[:ascii:]]*)", replacement="\\2_\\3", perl=TRUE)
+  
+  # Test for empty droplets
+  x.sce <- read10xCounts(x.dir, col.names=TRUE)
+  colData(x.sce)$Sample <- x.samp
+  raggazini.sce.list[[x]] <- x.sce
+  
+}
+
+ragga.sce <- do.call(cbind, raggazini.sce.list)
+```
+
+I still need to normalise the data before batch integration.
+
+```{r}
+keep_genes <- rowMeans(counts(ragga.sce)) > 0.01
+cluster.size <- ceiling(ncol(ragga.sce) * 0.01)
+clusters <- quickCluster(ragga.sce, min.size=cluster.size,
+                         subset.row=keep_genes,
+                         BPPARAM=MulticoreParam(workers=3),
+                         method="igraph")
+max.size <- floor(cluster.size/2)
+# change the window size in 50% increments
+size.inc <- ceiling(max.size * 0.5)
+message(paste0("Estimating size factors using ", size.inc, " cell increments"))
+# how are there so many negative size factors?
+ragga.sce <- computeSumFactors(ragga.sce,
+                             max.cluster.size=max.size,
+                             positive=TRUE,
+                             subset.row=keep_genes,
+                             assay.type='counts', clusters=clusters)
+neg.sf <- sum(sizeFactors(ragga.sce) < 0)
+ragga.sce <- logNormCounts(ragga.sce)
+
+ragga.sce <- multiBatchNorm(ragga.sce, batch=ragga.sce$Sample, assay.type="counts",
+                            min.mean=0.01, normalize.all=TRUE, preserve.single=TRUE) # rescales to make sure all equal across batches
+```
+
+Now for HVGs, clusters and reduced dimensions.
+
+```{r}
+ragga.hvg <- modelGeneVar(ragga.sce, block=colData(ragga.sce)$Sample, equiweight=FALSE) # account for batches weighted by the number of cells.
+ragga.hvg$FDR[is.na(ragga.hvg$FDR)] <- 1
+
+table(ragga.hvg$FDR < 0.01)
+```
+
+That is _a lot_ of HVGs, even at 1% FDR.
+
+```{r}
+set.seed(42)
+reducedDim(ragga.sce, "PCA") <- do.call(rbind, multiBatchPCA(ragga.sce, subset.row=ragga.hvg$FDR < 0.01, batch=colData(ragga.sce)$Sample))
+assay(ragga.sce, "Cosine") <- cosineNorm(logcounts(ragga.sce))
+reducedDim(ragga.sce, "Cosine.PCA") <- do.call(rbind, multiBatchPCA(ragga.sce, subset.row=ragga.hvg$FDR < 0.01, batch=colData(ragga.sce)$Sample, assay.type="Cosine"))
+reducedDim(ragga.sce, "MNN") <- reducedMNN(reducedDim(ragga.sce, "PCA"), batch=colData(ragga.sce)$Sample, k=50)$corrected
+reducedDim(ragga.sce, "Cosine.MNN") <- reducedMNN(reducedDim(ragga.sce, "Cosine.PCA"), batch=colData(ragga.sce)$Sample, k=50)$corrected
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(42)
+mnn.umap.map <- as.data.frame(umap(as.matrix(reducedDim(ragga.sce, "MNN")),
+                                             n_neighbors=50,
+                                             init='spectral',
+                                             n_components=2,
+                                             min_dist=0.2,
+                                             method='naive')$layout)
+colnames(mnn.umap.map) <- c("UMAP1", "UMAP2")
+reducedDim(ragga.sce, "UMAP") <- as.matrix(mnn.umap.map)
+mnn.umap.map$CellID <- colnames(ragga.sce)
+
+ragga.knn <- buildKNNGraph(reducedDim(ragga.sce, "MNN")[, c(1:30)], transposed=TRUE, k=30)
+ragga.fr <- as.data.frame(layout_with_fr(ragga.knn))
+colnames(ragga.fr) <- c("FR1", "FR2")
+# rownames(ragga.fr) <- colnames(ragga.sce)
+reducedDim(ragga.sce, "FR") <- as.matrix(ragga.fr)
+ragga.fr$CellID <- colnames(ragga.sce)
+
+ragga.clust.df <- data.frame("CellID"=colnames(ragga.sce),
+                             "Louvain.Cluster"=as.character(membership(cluster_louvain(ragga.knn, resolution=0.7))))
+rag.max.clust <- max(as.numeric(ragga.clust.df$Louvain.Cluster))
+ragga.clust.df$Louvain.Cluster <- factor(as.character(ragga.clust.df$Louvain.Cluster),
+                                         levels=c(1:rag.max.clust))
+clust.cols <- colorRampPalette(pal_d3("category20")(20))(rag.max.clust)
+names(clust.cols) <- levels(ragga.clust.df$Louvain.Cluster)
+
+red.df <- merge(mnn.umap.map, ragga.fr, by='CellID')
+meta.df <- as.data.frame(colData(ragga.sce))
+meta.df$CellID <- colnames(ragga.sce)
+ragga.proj.merge <- Reduce(x=list(meta.df[ ,!colnames(meta.df) %in% c("Louvain.Cluster")], red.df, ragga.clust.df),
+                           f=function(x, y) merge(x, y, by='CellID'))
+
+colData(ragga.sce)$Louvain.Cluster <- ragga.clust.df$Louvain.Cluster
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.95}
+ggplot(ragga.proj.merge,
+   aes(x=UMAP1, y=UMAP2)) +
+    geom_scattermore(aes(colour=Sample), pointsize=1) +
+    scale_colour_d3() +
+    theme_cowplot() +
+    NULL
+    
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Raggazini-Sample.png",
+       height=4.95, width=7.95, dpi=300, bg = 'white')
+```
+
+This is all of the mTEC and cTEC single-cell data from Raggazini _et al_. There are a couple of apparent populations containing cells from both sorting populations, i.e. mixed 
+blue, green, red and orange points.  I'll 
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=7.95}
+ggplot(ragga.proj.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(aes(colour=Louvain.Cluster), pointsize=1) +
+  scale_colour_manual(values=clust.cols) +
+  theme_cowplot() +
+  guides(colour=guide_legend(title="Louvain", override.aes=list(size=3, shape=15)))  +
+  NULL
+    
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Raggazini-LouvainCluster.png",
+       height=4.95, width=7.95, dpi=300, bg = 'white')
+```
+
+This is the Louvain clustering on these cells from a kNN-graph (d=50, k=30). I have no idea how comparable this is with the original analysis as they don't describe the SNN-graph 
+building step; I'll assume default for `FindNeighbors`, i.e. 20.
+
+```{r}
+ragga.louvain.markers <- findMarkers(ragga.sce, assay.type="logcounts", groups=colData(ragga.sce)$Louvain.Cluster,
+                                     test.type="wilcox", pval.type="all", row.data=rowData(ragga.sce))
+
+ragga.top.markers <- list() # just extract the top 5
+ragga.markers <- c()
+for(i in seq_len(rag.max.clust)){
+  i.markers <- ragga.louvain.markers[[i]]
+  i.markers <- i.markers[order(i.markers$FDR, decreasing=FALSE), ]
+  i.top <- i.markers$Symbol[1:10]
+  ragga.top.markers[[i]] <- i.top
+  ragga.markers <- unique(c(ragga.markers, i.top))
+}
+
+data.frame("Louvain.Cluster"=seq_len(rag.max.clust), "Markers"=unlist(lapply(ragga.top.markers, FUN=function(PX) paste(PX, collapse=", "))))
+```
+
+They claim the stem cells have a polykeratin signature, including KRT5, 8, 13, 14, 15 and 17.
+
+```{r}
+ragga.goi <- c("KRT5", "KRT8", "KRT13", "KRT14", "KRT15", "KRT17", "BCAM", "THY1", "CLU", "IFITM3", "TIMP1")
+ragga.goi.exprs <- as.data.frame(as.matrix(t(logcounts(ragga.sce[rowData(ragga.sce)$Symbol %in% ragga.goi, ]))))
+colnames(ragga.goi.exprs) <- rowData(ragga.sce[colnames(ragga.goi.exprs), ])$Symbol
+ragga.goi.exprs$CellID <- colnames(ragga.sce)
+
+ragga.meta.merge <- merge(ragga.proj.merge, ragga.goi.exprs, by="CellID")
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=6.95, fig.width=11.95}
+krt.p.list <- list()
+
+for(x in seq_along(ragga.goi)){
+  x.df <- ragga.meta.merge[, c("UMAP1", "UMAP2", ragga.goi[x])]
+  colnames(x.df) <- c("UMAP1", "UMAP2", "Gene")
+  x.p <- ggplot(x.df,
+                aes(x=UMAP1, y=UMAP2)) +
+    geom_scattermore(aes(colour=Gene), pointsize=1) +
+    scale_colour_distiller(palette = "Purples", direction=1) +
+    theme_cowplot() +
+    guides(colour=guide_colorbar(title=ragga.goi[x]))  +
+    NULL
+  
+  krt.p.list[[x]] <- x.p
+}
+
+plot_grid(plotlist=krt.p.list)
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Raggazini-PolykeratinSig.png",
+       height=6.95, width=11.95, dpi=300, bg = 'white')
+```
+
+The only population here that apparently expresses all of the cytokeratins is Cluster 1. Many of the top 10 genes I find here are concordant with Figure 1 suggesting these are the 
+same cells described in their paper. These are the cells that I want to find equivalent cells for in our perinatal mice data.
+
+The next step is to load our mouse data, then integrate the two sets together.
+
+# Mouse perinatal TEC
+
+The input is the Milo object which contains the post-QC single-cells, and the inferred nhoods.
+
+```{r, warning=FALSE, message=FALSE}
+biomaRt.connection <- useEnsembl("ensembl", dataset="mmusculus_gene_ensembl")
+
+gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name"),
+                 mart=biomaRt.connection)
+rownames(gene.df) <- gene.df$ensembl_gene_id
+```
+
+
+```{r}
+# derive all of the relevant meta data
+perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+perinatal.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_allMeta.tsv",
+                             sep="\t", header=TRUE, stringsAsFactors = FALSE)
+rownames(perinatal.meta) <- perinatal.meta$CellID
+
+colData(perinatal.milo)$HTO <- colData(perinatal.milo)$HTO
+
+colData(perinatal.milo)$SortType <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
+colData(perinatal.milo)$TECSort <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
+colData(perinatal.milo)$Day <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\2")
+colData(perinatal.milo)$Day[colData(perinatal.milo)$Day %in% c("d20")] <- "d2"
+colData(perinatal.milo)$Replicate <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\4")
+colData(perinatal.milo)$TEC.Label <- perinatal.meta[colnames(perinatal.milo), ]$TEC.Label
+colData(perinatal.milo)$Nhood.Cluster <- gsub(perinatal.meta[colnames(perinatal.milo), ]$Nhood.TEC,
+                                              pattern="([[:ascii:]]*)(\\()([0-9]+)(\\))", replacement="\\3", perl=TRUE)
+
+rowData(perinatal.milo)$Symbol <- gene.df[rownames(perinatal.milo), ]$external_gene_name
+```
+
+
+```{r}
+perinatal.goi.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_GeneGOI.tsv",
+                         sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+perinatal.protein.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_ProteinGOI.tsv",
+                                   sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+
+perinatal.umap.df <- as.data.frame(reducedDim(perinatal.milo, "UMAP"))
+perinatal.umap.df$CellID <- colnames(perinatal.milo)
+
+perinatal.fr.df <- as.data.frame(reducedDim(perinatal.milo, "FR"))
+perinatal.fr.df$CellID <- colnames(perinatal.milo)
+
+# get the kNN-based labels
+knn.labels <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_SMARTcombined_Labels.tsv",
+                         sep="\t", header=TRUE, stringsAsFactors=FALSE)
+knn.labels$Cluster[is.na(knn.labels$Cluster)] <- "Missing"
+
+inter.cols <- c("#9970ab", "#35978f", "#B0cdc1", "#762a83", "#01665e", "#e7d4e8", "#dfc27d", "#8c510a" ,"#bf812d", "black")
+names(inter.cols) <- c("Post-Aire mTEC", 'Intertypical TEC','Mature cTEC', 'Tuft-like mTEC', 
+                       'Proliferating TEC', 'Mature mTEC', 'nTEC', 'Perinatal cTEC', 'sTEC', "Missing")
+
+perinatal.protein.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_ProteinGOI.tsv",
+                                   sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+perinatal.cluster <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_clusters.tsv",
+                                sep="\t", header=TRUE, stringsAsFactors=FALSE)
+colnames(perinatal.cluster) <- c("CellID", "Graph.Cluster")
+
+n.clust <- length(unique(perinatal.cluster$Graph.Cluster))
+clust.cols <- colorRampPalette(pal_d3("category20")(20))(n.clust)
+names(clust.cols) <- unique(perinatal.cluster$Graph.Cluster)
+
+tec.annot.df <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_AllAnnotations.txt",
+                           sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+perinatal.umap.merge <- Reduce(x=list(perinatal.meta[, !colnames(perinatal.meta) %in% c("Nhood.TEC", "TEC.Label")], perinatal.fr.df, perinatal.umap.df, 
+                                      perinatal.goi.df, perinatal.protein.df, 
+                                      perinatal.cluster, knn.labels, tec.annot.df),
+                               f=function(x, y) merge(x, y, by='CellID'))
+
+n.groups <- length(unique(perinatal.umap.merge$TEC.Label))
+samp.cols <- colorRampPalette(pal_d3("category20")(20))(n.groups)
+names(samp.cols) <- unique(perinatal.umap.merge$TEC.Label)
+```
+
+Do we find any cells that look like they have a polykeratin phenotype?
+
+
+They claim the stem cells have a polykeratin signature, including KRT5, 8, 13, 14, 15 and 17.
+
+```{r}
+perinatal.goi <- c("Krt5", "Krt8", "Krt13", "Krt14", "Krt15", "Krt17", "Bcam", "Fn1", "Clu", "Timp1", "Ifitm3", "Thy1")
+perinatal.goi.exprs <- as.data.frame(as.matrix(t(logcounts(perinatal.milo[rowData(perinatal.milo)$Symbol %in% perinatal.goi, ]))))
+colnames(perinatal.goi.exprs) <- rowData(perinatal.milo[colnames(perinatal.goi.exprs), ])$Symbol
+perinatal.goi.exprs$CellID <- colnames(perinatal.milo)
+
+perinatal.meta.merge <- merge(perinatal.umap.merge[, !colnames(perinatal.umap.merge) %in% perinatal.goi], perinatal.goi.exprs[, ], by="CellID")
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=6.95, fig.width=11.95}
+krt.p.list <- list()
+
+for(x in seq_along(perinatal.goi)){
+  x.df <- perinatal.meta.merge[, c("UMAP1", "UMAP2", perinatal.goi[x])]
+  colnames(x.df) <- c("UMAP1", "UMAP2", "Gene")
+  x.p <- ggplot(x.df,
+                aes(x=UMAP1, y=UMAP2)) +
+    geom_scattermore(aes(colour=Gene), pointsize=1) +
+    scale_colour_distiller(palette = "Purples", direction=1) +
+    theme_cowplot() +
+    guides(colour=guide_colorbar(title=perinatal.goi[x]))  +
+    NULL
+  
+  krt.p.list[[x]] <- x.p
+}
+
+plot_grid(plotlist=krt.p.list)
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal-StemSignatureGenes.png",
+       height=6.95, width=11.95, dpi=300, bg = 'white')
+```
+
+The closest to a polykeratin signature is in the Ly6d+/- Intertypical TEC (more Ly6d+ I think).
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=10.95}
+ggplot(perinatal.meta.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(aes(colour=TEC.Label), pointsize=1) +
+  scale_colour_manual(values=samp.cols) +
+  theme_cowplot() +
+  guides(colour=guide_legend(title="TEC", override.aes=list(size=3, shape=15)))  +
+  NULL
+    
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Pertinatal-NhoodTECLabel.png",
+       height=4.95, width=10.95, dpi=300, bg = 'white')
+```
+
+
+## Integration
+
+For the integration I will find all of the 1:1 homologous genes.
+
+```{r}
+# retrieve the linked data set to find homologs.
+homolog.gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "mmusculus_homolog_orthology_type",
+                                        "mmusculus_homolog_ensembl_gene", "mmusculus_homolog_associated_gene_name"),
+                         mart=hs.biomaRt.connection)
+table(homolog.gene.df$mmusculus_homolog_orthology_type)
+```
+
+I will focus on the one2one homologs.
+
+```{r}
+ragga.hvg.homologs <- homolog.gene.df[homolog.gene.df$ensembl_gene_id %in% rownames(ragga.hvg[ragga.hvg$FDR < 0.1,]) & 
+                                        homolog.gene.df$mmusculus_homolog_orthology_type %in% c("ortholog_one2one"), ]$ensembl_gene_id
+length(ragga.hvg.homologs)
+```
+
+These are the HVGs that are 1:1 orthologs.
+
+```{r}
+perinatal.hvgs <- modelGeneVar(perinatal.milo)
+perinatal.hvgs$FDR[is.na(perinatal.hvgs$FDR)] <- 1
+
+peri.hvg.homologs <- homolog.gene.df[homolog.gene.df$mmusculus_homolog_ensembl_gene %in% rownames(perinatal.hvgs[perinatal.hvgs$FDR < 0.1,]) & 
+                                        homolog.gene.df$mmusculus_homolog_orthology_type %in% c("ortholog_one2one"), ]$ensembl_gene_id
+length(peri.hvg.homologs)
+table(perinatal.hvgs$FDR < 0.1)
+```
+
+Of the ~3k mouse perinatal TEC HVGs ~2K are also 1:1 homologs. The union of these will be used as the HVGs in each data for PCA.
+
+```{r}
+all.homologs.hs <- unique(c(peri.hvg.homologs, ragga.hvg.homologs))
+all.homologs.ms <- unique(c(homolog.gene.df[homolog.gene.df$ensembl_gene_id %in% peri.hvg.homologs, ]$mmusculus_homolog_ensembl_gene,
+                            homolog.gene.df[homolog.gene.df$ensembl_gene_id %in% ragga.hvg.homologs, ]$mmusculus_homolog_ensembl_gene))
+```
+
+
+```{r}
+# map using the same gene set - mouse?
+ms.to.hs.gene.df <- homolog.gene.df[homolog.gene.df$mmusculus_homolog_ensembl_gene %in% all.homologs.ms, ]
+rownames(ms.to.hs.gene.df) <- ms.to.hs.gene.df$mmusculus_homolog_ensembl_gene
+
+hs.to.ms.gene.df <- homolog.gene.df[homolog.gene.df$mmusculus_homolog_ensembl_gene %in% all.homologs.ms, ]
+rownames(hs.to.ms.gene.df) <- hs.to.ms.gene.df$ensembl_gene_id
+
+peri.homo.milo <- perinatal.milo[rownames(perinatal.milo) %in% all.homologs.ms, ]
+rowData(peri.homo.milo)$HS.Symbol <- ms.to.hs.gene.df[rownames(peri.homo.milo), ]$external_gene_name
+rowData(peri.homo.milo)$HS.Ensembl <- ms.to.hs.gene.df[rownames(peri.homo.milo), ]$ensembl_gene_id
+rowData(peri.homo.milo)$MM.Ensembl <- ms.to.hs.gene.df[rownames(peri.homo.milo), ]$mmusculus_homolog_ensembl_gene
+
+rownames(perinatal.umap.merge) <- perinatal.umap.merge$CellID
+colData(peri.homo.milo)$Nhood.TEC <- perinatal.umap.merge[colnames(peri.homo.milo), ]$TEC.Label
+
+ragga.homo.sce <- ragga.sce[rownames(ragga.sce) %in% all.homologs.hs, ]
+rowData(ragga.homo.sce)$HS.Symbol <- hs.to.ms.gene.df[rownames(ragga.homo.sce), ]$external_gene_name
+rowData(ragga.homo.sce)$HS.Ensembl <- hs.to.ms.gene.df[rownames(ragga.homo.sce), ]$ensembl_gene_id
+rowData(ragga.homo.sce)$MM.Ensembl <- hs.to.ms.gene.df[rownames(ragga.homo.sce), ]$mmusculus_homolog_ensembl_gene
+rownames(ragga.homo.sce) <- rowData(ragga.homo.sce)$MM.Ensembl
+
+# make a combined SCE
+common.genes <- intersect(rownames(ragga.homo.sce), rownames(peri.homo.milo))
+ragga.homo.sce <- ragga.homo.sce[common.genes, ]
+peri.homo.milo <- peri.homo.milo[common.genes, ]
+
+all(rownames(ragga.homo.sce) == rownames(peri.homo.milo))
+```
+
+
+```{r}
+homolog.sce <- SingleCellExperiment(assay=list("counts"=do.call(cbind, list(counts(ragga.homo.sce), counts(peri.homo.milo))),
+                                               "logcounts"=do.call(cbind, list(logcounts(ragga.homo.sce), logcounts(peri.homo.milo)))))
+rowData(homolog.sce)$HS.Symbol <- rowData(peri.homo.milo)$HS.Symbol
+rowData(homolog.sce)$HS.Ensembl <- rowData(peri.homo.milo)$HS.Ensembl
+rowData(homolog.sce)$MM.Ensembl <- rowData(peri.homo.milo)$MM.Ensembl
+rowData(homolog.sce)$MM.Symbol <- gene.df[rownames(homolog.sce), ]$external_gene_name
+
+colData(homolog.sce)$Species <- c(rep("HSapiens", ncol(ragga.homo.sce)), rep("MMusculus", ncol(peri.homo.milo)))
+colData(homolog.sce)$Age <- c(rep("Postnatal", ncol(ragga.homo.sce)), colData(peri.homo.milo)$Day)
+colData(homolog.sce)$TECSort <- c(gsub(colData(ragga.homo.sce)$Sample, pattern="GSM[0-9]+", replacement=""), colData(peri.homo.milo)$Day)
+colData(homolog.sce)$Cluster <- c(paste0("HS.", colData(ragga.homo.sce)$Louvain.Cluster),
+                                  paste0("MM.", colData(peri.homo.milo)$Nhood.Cluster))
+colData(homolog.sce)$TEC.Label <- c(rep("Unknown", ncol(ragga.homo.sce)), colData(peri.homo.milo)$Nhood.TEC)
+
+colnames(homolog.sce) <- paste0(colData(homolog.sce)$Species, "_", colnames(homolog.sce))
+homolog.sce <- multiBatchNorm(homolog.sce, batch=colData(homolog.sce)$Species)
+
+assay(homolog.sce, "Cosine") <- cosineNorm(logcounts(homolog.sce))
+```
+
+Straight to PCA (species is batch) or find HVGs first?
+
+```{r}
+homo.hvg <- modelGeneVar(homolog.sce, block=colData(homolog.sce)$Species, equiweight=TRUE)
+homo.hvg[is.na(homo.hvg$FDR)] <- 1
+table(homo.hvg$FDR < 0.1)
+```
+
+~1500 HVGs seems quite reasonable. However, we probably want to integrate into the space defined by the mouse data for comparability.
+
+```{r}
+peri.homologs <- homolog.gene.df[homolog.gene.df$mmusculus_homolog_ensembl_gene %in% rownames(perinatal.hvgs) & 
+                                   homolog.gene.df$mmusculus_homolog_orthology_type %in% c("ortholog_one2one"), ]$ensembl_gene_id
+length(peri.homologs)
+table(perinatal.hvgs$FDR < 0.1)
+```
+
+
+```{r}
+set.seed(42)
+reducedDim(homolog.sce, "PCA") <- do.call(rbind, multiBatchPCA(homolog.sce, subset.row=rownames(homolog.sce) %in% rownames(perinatal.hvgs[perinatal.hvgs$FDR<0.1,]),
+                                                               batch=colData(homolog.sce)$Species, d=30, assay.type="logcounts"))[colnames(homolog.sce), ]
+reducedDim(homolog.sce, "Cosine.PCA") <- do.call(rbind, multiBatchPCA(homolog.sce, subset.row=rownames(homolog.sce) %in% rownames(perinatal.hvgs[perinatal.hvgs$FDR<0.1,]),
+                                                                      batch=colData(homolog.sce)$Species, d=30, assay.type="Cosine"))[colnames(homolog.sce), ]
+reducedDim(homolog.sce, "Cosine.MNN") <- reducedMNN(reducedDim(homolog.sce, "Cosine.PCA"), batch=colData(homolog.sce)$Species, k=50)$corrected
+reducedDim(homolog.sce, "MNN") <- reducedMNN(reducedDim(homolog.sce, "PCA"), batch=colData(homolog.sce)$Species, k=50)$corrected
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(42)
+homo.umap.map <- as.data.frame(umap(as.matrix(reducedDim(homolog.sce, "MNN")),
+                                    n_neighbors=30,
+                                    init='random',
+                                    n_components=2,
+                                    min_dist=0.2,
+                                    method='naive')$layout)
+colnames(homo.umap.map) <- c("UMAP1", "UMAP2")
+reducedDim(homolog.sce, "UMAP") <- as.matrix(homo.umap.map)
+homo.umap.map$CellID <- colnames(homolog.sce)
+
+homo.knn <- buildKNNGraph(reducedDim(homolog.sce, "MNN"), transposed=TRUE, k=50)
+homo.fr <- as.data.frame(layout_with_fr(homo.knn))
+colnames(homo.fr) <- c("FR1", "FR2")
+reducedDim(homolog.sce, "FR") <- as.matrix(homo.fr)
+homo.fr$CellID <- colnames(homolog.sce)
+
+homo.clust.df <- data.frame("CellID"=colnames(homolog.sce),
+                             "Species.Cluster"=as.character(membership(cluster_louvain(homo.knn, resolution=0.7))))
+homo.max.clust <- max(as.numeric(homo.clust.df$Species.Cluster))
+homo.clust.df$Species.Cluster <- factor(as.character(homo.clust.df$Species.Cluster),
+                                         levels=c(1:homo.max.clust))
+clust.cols <- colorRampPalette(pal_d3("category20")(20))(homo.max.clust)
+names(clust.cols) <- levels(homo.clust.df$Species.Cluster)
+
+red.df <- merge(homo.umap.map, homo.fr, by='CellID')
+meta.df <- as.data.frame(colData(homolog.sce))
+meta.df$CellID <- colnames(homolog.sce)
+homo.proj.merge <- Reduce(x=list(meta.df, red.df, homo.clust.df),
+                           f=function(x, y) merge(x, y, by='CellID'))
+
+colData(homolog.sce)$Species.Cluster <- homo.clust.df$Species.Cluster
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(homo.proj.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(data=homo.proj.merge[, c("UMAP1", "UMAP2")],
+                   pointsize=0.5, colour="grey80") +
+  geom_scattermore(aes(colour=Species), pointsize=1) +
+  scale_colour_d3() +
+  theme_cowplot() +
+  facet_wrap(~Species) +
+  guides(colour=guide_legend(title="Species", override.aes=list(size=3, shape=15)))  +
+  NULL
+    
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Human-toMouse-Species.png",
+       height=4.95, width=7.95, dpi=300, bg = 'white')
+```
+
+There is some overlap/integration based on the co-positioning of cells int his UMAP. Broadly there is still a very strong separation. Do we see the same thing for human-human data?
+
+```{r}
+table(homo.proj.merge$TEC.Label, homo.proj.merge$Species.Cluster)
+```
+
+
+```{r}
+table(homo.proj.merge$Cluster, homo.proj.merge$Species.Cluster)
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(homo.proj.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(data=homo.proj.merge[, c("UMAP1", "UMAP2")],
+                   pointsize=0.5, colour="grey80") +
+  geom_scattermore(aes(colour=Species.Cluster), pointsize=1) +
+  scale_colour_manual(values = clust.cols) +
+  theme_cowplot() +
+  facet_wrap(~Species) +
+  guides(colour=guide_legend(title="Species.Cluster", override.aes=list(size=3, shape=15)))  +
+  NULL
+    
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Human-toMouse-Clusters.png",
+       height=4.95, width=7.95, dpi=300, bg = 'white')
+```
+
+This performs the integration using the genes to define the mouse TEC space - now do the same for the genes that define the human space.
+
+
+## Neighbourhood correlation analysis
+
+Use the nhood correlation analysis approach to identify the co-corresponding neighbourhoods between the human and mouse TEC.
+
+```{r}
+set.seed(42)
+ragga.milo <- Milo(ragga.homo.sce)
+ragga.milo <- buildGraph(ragga.milo, k=50, d=50)
+ragga.milo <- makeNhoods(ragga.milo, k=50, d=50, p=0.1, reduced_dims="PCA", refinement_scheme="graph")
+ragga.milo <- countCells(ragga.milo, samples="Sample", meta.data=as.data.frame(colData(ragga.milo)))
+ragga.milo <- buildNhoodGraph(ragga.milo)
+ragga.milo <- calcNhoodExpression(ragga.milo, assay="logcounts")
+```
+
+```{r}
+milo.list <- list("Mouse"=perinatal.milo, "Ragazzini.Human"=ragga.milo)
+```
+
+Select the set of common HVGs for this cross-nhood comparison.
+
+```{r}
+hvg.list <- lapply(milo.list,
+                   FUN=function(MILO){
+                     hvg.stat <- modelGeneVar(MILO)
+                     hvg.stat$FDR[is.na(hvg.stat$FDR)] <- 1
+                     hvg.stat$GeneID <- rownames(hvg.stat)
+                     hvg.stat$GeneID[hvg.stat$FDR < 0.1]
+                     })
+
+all.hvgs <- unique(unlist(hvg.list))
+message("Found ", length(all.hvgs), " hvgs in total")
+common.genes <- Reduce(lapply(milo.list, rownames), f=intersect)
+common.hvg <- intersect(all.hvgs, common.genes)
+message(length(common.hvg), " hvgs commonly expressed across datasets")
+
+milo.names <- names(milo.list)
+
+for(x in seq_along(milo.names)){
+  x.names <- milo.names[x]
+  x.milo <- calcNhoodExpression(milo.list[[x.names]], subset.row=common.hvg)
+  milo.list[[x.names]] <- x.milo
+}
+```
+
+Loop over the data and write the correlation matrices to file.
+
+```{r}
+nhood.corr.list <- list()
+n.data <- length(milo.names)
+for(i in seq_along(milo.names)){
+  i.milo <- milo.list[[milo.names[i]]]
+  ij <- i
+  for(j in seq_along(c(1:n.data))){
+      if(i != j){
+          j.milo <- milo.list[[milo.names[j]]]
+
+          ij.cor <- cor(nhoodExpression(i.milo), nhoodExpression(j.milo))
+      	  rownames(ij.cor) <- paste(milo.names[i], colnames(nhoods(i.milo)), sep="_")
+      	  colnames(ij.cor) <- paste(milo.names[j], colnames(nhoods(j.milo)), sep="_")
+      	  nhood.corr.list[[paste(milo.names[i], milo.names[j], sep="-")]] <- ij.cor
+
+          ij.file <- paste("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal", milo.names[i], milo.names[j], "CorrMatrix.tsv", sep="-")
+          write.table(ij.cor, file=ij.file, sep="\t", row.names=TRUE, quote=FALSE)
+      }
+   }
+}
+```
+
+Now we find the nhoods with the highest correlations between data sets.
+
+```{r}
+pair.names <- names(nhood.corr.list)
+
+for(x in seq_along(pair.names)){
+  x.p1 <- unlist(strsplit(pair.names[x], split="-", fixed=TRUE))[1]
+  x.p2 <- unlist(strsplit(pair.names[x], split="-", fixed=TRUE))[2]
+  x.cor <- nhood.corr.list[[pair.names[x]]]
+
+  p1.max <- apply(x.cor, 1, max)
+  # match the column ID
+  print(head(p1.max))
+  print(class(p1.max))
+  p1.nhood.idx <- do.call(args=lapply(p1.max, FUN=function(P1X){
+   	       	                     .idx <- which(x.cor == P1X, arr.ind=TRUE)
+			 	     paste(colnames(x.cor[.idx[1, 1], .idx[1, 2], drop=FALSE]), collapse=", ") 
+			 	 }), what=rbind.data.frame)
+  colnames(p1.nhood.idx) <- c(paste0(x.p2, ".Nhood"))
+  p1.nhood.idx[, paste0(x.p1, ".Nhood")] <- names(p1.max)
+      
+  p2.max <- apply(x.cor, 2, max)
+  p2.nhood.idx <- do.call(args=lapply(p2.max, FUN=function(P2X){
+  	       	         	      .idx <- which(x.cor == P2X, arr.ind=TRUE)
+			 	      paste(rownames(x.cor[.idx[, 1], .idx[, 2], drop=FALSE]), collapse=", ")
+			  }), what=rbind.data.frame)
+  colnames(p2.nhood.idx) <- c(paste0(x.p1, ".Nhood"))
+  p2.nhood.idx[, paste0(x.p2, ".Nhood")] <- names(p2.max)
+
+  write.table(p1.nhood.idx, paste("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal", paste0(x.p1, "to", x.p2), "MatchNhoods.tsv", sep="-"), 
+              quote=FALSE, row.names=FALSE, sep="\t")
+  write.table(p2.nhood.idx, paste("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal", paste0(x.p2, "to", x.p1), "MatchNhoods.tsv", sep="-"), 
+              quote=FALSE, row.names=FALSE, sep="\t")
+ }
+```
+
+Add the nhood annotations to each Milo object.
+
+```{r}
+perinatal.res <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res-ZsGCompare.txt",
+                            sep="\t", header=TRUE, stringsAsFactors=FALSE)
+colnames(perinatal.res) <- paste0("Mouse.", colnames(perinatal.res)) # Perinatal Milo results ZsGreen+ and ZsGreen-
+
+perinatal.nhoods <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_Nhood-NhoodGroup_map.tsv",
+                               sep="\t", header=TRUE, stringsAsFactor=FALSE)
+colnames(perinatal.nhoods) <- c("Mouse.Nhood", "Mouse.NhoodIdx", "Mouse.NhoodGroup") # Perinatal NhoodIdx - Nhood mapping
+```
+
+
+```{r}
+set.seed(42)
+ragga.nhoods <- nhoods(ragga.milo)
+ragga.fake.res <- data.frame("logFC"=rep(1, ncol(ragga.nhoods)), "SpatialFDR"=rep(0.1, ncol(ragga.nhoods)), "Nhood"=seq_len(ncol(ragga.nhoods)))
+ragga.fake.res <- groupNhoods(ragga.milo, ragga.fake.res, da.fdr=1, overlap=5)
+ragga.fake.res <- annotateNhoods(ragga.milo, ragga.fake.res, coldata_col="Louvain.Cluster")
+ragga.fake.res <- annotateNhoods(ragga.milo, ragga.fake.res, coldata_col="Sample")
+```
+
+
+```{r, fig.height=4.95, fig.width=6.95}
+plotNhoodGroups(ragga.milo, milo_res=ragga.fake.res) + 
+  guides(fill=guide_legend(override.aes=list(size=3), ncol=2)) +
+  NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Raggazini_NhoodUMAP-nhoodGroups.png",
+       height=4.95, width=6.95, dpi=300)
+```
+
+
+```{r}
+ragga.human.nhoods <- data.frame("Ragazzini.Human.NhoodIdx"=unlist(nhoodIndex(ragga.milo)), "Ragazzini.Human.Nhood"=seq_len(ncol(nhoods(ragga.milo))))
+colnames(ragga.fake.res) <- paste0("Ragazzini.Human.", colnames(ragga.fake.res))
+```
+
+
+
+
+
+```{r}
+mouse.ragga.match <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal-MousetoRagazzini.Human-MatchNhoods.tsv",
+                                sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+mouse.ragga.cor <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal-Mouse-Ragazzini.Human-CorrMatrix.tsv",
+                              sep="\t", header=TRUE, stringsAsFactors = FALSE)
+
+# add the correlation coefficient between best-matching nhoods
+mouse.ragga.match$Corr <- NA
+for(i in seq_len(nrow(mouse.ragga.match))){
+    i.peri <- mouse.ragga.match[i, , drop=FALSE]$Mouse.Nhood
+    i.hum <- mouse.ragga.match[i, , drop=FALSE]$Ragazzini.Human.Nhood
+    mouse.ragga.match[i, ]$Corr <- mouse.ragga.cor[i.peri, i.hum]
+}
+
+mouse.ragga.match$Mouse.NhoodIdx <- gsub(mouse.ragga.match$Mouse.Nhood, pattern="(Mouse)_([0-9]+)", replacement="\\2")
+mouse.ragga.match$Ragazzini.Human.NhoodIdx <- gsub(mouse.ragga.match$Ragazzini.Human.Nhood, pattern="(Ragazzini\\.Human)_([0-9]+)", replacement="\\2")
+colnames(mouse.ragga.match) <- c("Ragazzini.Human.NhoodName", "Mouse.Nhood.Name", "Corr", "Mouse.NhoodIdx", "Ragazzini.Human.NhoodIdx")
+mouse.ragga.match.merge <- merge(mouse.ragga.match, ragga.human.nhoods, by=c("Ragazzini.Human.NhoodIdx"))
+mouse.ragga.match.merge <- merge(mouse.ragga.match.merge, ragga.fake.res, by=c("Ragazzini.Human.Nhood"))
+
+mouse.to.human.full <- merge(mouse.ragga.match.merge, perinatal.nhoods[, c("Mouse.Nhood", "Mouse.NhoodIdx")], by=c("Mouse.NhoodIdx"))
+mouse.to.human.full <- merge(mouse.to.human.full, perinatal.res, by="Mouse.Nhood")
+
+ggplot(mouse.ragga.match, aes(x=Corr)) +
+  geom_histogram() +
+  theme_cowplot() +
+  NULL
+```
+
+The correlations aren't massive - average is ~0.6, noting that this is defined in a space of 1:1 homologous HVGs defined from the mouse data.
+
+
+```{r, warning=FALSE, message=FALSE}
+mouse.to.human.alluvium <- mouse.to.human.full[, c("Mouse.Nhood", "Mouse.NhoodIdx", "Mouse.Nhood.TEC", "Ragazzini.Human.Louvain.Cluster",
+                                                   "Ragazzini.Human.Nhood", "Ragazzini.Human.NhoodIdx", "Ragazzini.Human.NhoodGroup")]
+
+
+# max.peri <- max(peri.to.age.alluvium$Perinatal_Milo.NhoodGroup)
+max.human <- max(mouse.to.human.alluvium$Ragazzini.Human.NhoodGroup)
+
+mouse.to.human.alluvium$Mouse_Milo.Nhood.TEC <- paste0("Mouse_", mouse.to.human.alluvium$Mouse.Nhood.TEC)
+mouse.to.human.alluvium$Human_Milo.NhoodGroup <- paste0("Human_", mouse.to.human.alluvium$Ragazzini.Human.NhoodGroup)
+
+alluvium.df <- as.data.frame(table(mouse.to.human.alluvium$Mouse.Nhood.TEC, mouse.to.human.alluvium$Ragazzini.Human.NhoodGroup))
+colnames(alluvium.df) <- c("Mouse.Group", "Ragazzini.Human", "Freq")
+alluvium.df$Perinatal <- as.character(alluvium.df$Mouse.Group)
+alluvium.df$Perinatal <- gsub(unlist(lapply(strsplit(alluvium.df$Perinatal, split=" ", fixed=TRUE),
+                                                  FUN=function(PX) paste(tail(PX, 1)))),
+                                    pattern="(\\()([0-9]+)(\\))", replacement="\\2")
+alluvium.df$Mouse.Group <- factor(gsub(as.character(alluvium.df$Mouse.Group), pattern="Perinatal_", replacement=""),
+                                      levels=rev(c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)",
+                                                   "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", "cTEC early (8)",
+                                                   "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                                                   "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)",
+                                                   "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)")))
+alluvium.df$Ragazzini.Human <- factor(gsub(alluvium.df$Ragazzini.Human, pattern="(\\S+_)([0-9]+)", replacement="\\2"),
+                                      levels=c(1:max.human))
+
+max.peri <- length(unique(alluvium.df$Perinatal))
+alluvium.df$Perinatal <- factor(alluvium.df$Perinatal,
+                                levels=c(1:max.peri))
+
+# convert to lodes form to use geom_flow and ggrepel
+alluvium.lodes <- to_lodes_form(alluvium.df, axes=c(2, 4), key="Dataset", id="Nhood", value=Group)
+
+samp.cols <- rev(colorRampPalette(pal_d3("category20")(20))(max.peri))
+names(samp.cols) <- levels(alluvium.df$Mouse.Group)
+```
+
+
+
+
+```{r, fig.height=7.15, fig.width=9.95}
+ggplot(alluvium.lodes, aes(x=Dataset, stratum=Group, alluvium=Nhood, y=Freq)) +
+    geom_flow(aes(fill=Mouse.Group), width=1/8) +
+    geom_stratum(fill='grey', color = "black", width=1/12) +
+    theme_cowplot() + 
+    geom_text_repel(aes(label = ifelse(as.numeric(Dataset) == 2, as.character(Group), NA)),
+                    stat = "stratum", size = 4, direction = "y", nudge_x = -0.1) +
+    geom_text_repel(aes(label = ifelse(as.numeric(Dataset) == 1, as.character(Group), NA)),
+                    stat = "stratum", size = 4, direction = "y", nudge_x = 0.1) +
+    scale_x_discrete(limits = c("Perinatal", "Ragazzini.Human"), expand = c(0.1, 0)) +
+    scale_fill_manual(values=rev(samp.cols), breaks=rev(names(samp.cols))) +
+    guides(fill=guide_legend(title="Perinatal\nTEC Group", override.aes=list(alpha=1, colour='black'), ncol=1)) +
+    theme(axis.line=element_blank(), axis.text.y=element_blank(),
+          axis.title=element_blank(), axis.text.x=element_text(size=20), axis.ticks=element_blank()) +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Alluvium_MousetoRagazzini_NhoodGroupMap.png",
+       height=7.15, width=9.95, dpi=300, bg='white')
+```
+
+There are no mouse nhoods that correspond to the human nhood groups 2, 4, 5, 6, 10 or 11 - what are those cells?
+
+
+## Human gene space
+
+
+```{r}
+ragga.ms.homologs <- homolog.gene.df[homolog.gene.df$ensembl_gene_id %in% rownames(ragga.hvg[ragga.hvg$FDR < 0.1,]) & 
+                                       homolog.gene.df$mmusculus_homolog_orthology_type %in% c("ortholog_one2one"), ]$mmusculus_homolog_ensembl_gene
+
+set.seed(42)
+reducedDim(homolog.sce, "PCA") <- do.call(rbind, multiBatchPCA(homolog.sce, subset.row=rownames(homolog.sce) %in% ragga.ms.homologs,
+                                                               batch=colData(homolog.sce)$Species, d=30, assay.type="logcounts"))[colnames(homolog.sce), ]
+reducedDim(homolog.sce, "Cosine.PCA") <- do.call(rbind, multiBatchPCA(homolog.sce, subset.row=rownames(homolog.sce) %in% ragga.ms.homologs,
+                                                                      batch=colData(homolog.sce)$Species, d=30, assay.type="Cosine"))[colnames(homolog.sce), ]
+reducedDim(homolog.sce, "Cosine.MNN") <- reducedMNN(reducedDim(homolog.sce, "Cosine.PCA"), batch=colData(homolog.sce)$Species, k=50)$corrected
+reducedDim(homolog.sce, "MNN") <- reducedMNN(reducedDim(homolog.sce, "PCA"), batch=colData(homolog.sce)$Species, k=50)$corrected
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(42)
+homo.umap.map <- as.data.frame(umap(as.matrix(reducedDim(homolog.sce, "MNN")),
+                                    n_neighbors=30,
+                                    init='random',
+                                    n_components=2,
+                                    min_dist=0.2,
+                                    method='naive')$layout)
+colnames(homo.umap.map) <- c("UMAP1", "UMAP2")
+reducedDim(homolog.sce, "UMAP") <- as.matrix(homo.umap.map)
+homo.umap.map$CellID <- colnames(homolog.sce)
+
+homo.knn <- buildKNNGraph(reducedDim(homolog.sce, "MNN"), transposed=TRUE, k=50)
+homo.fr <- as.data.frame(layout_with_fr(homo.knn))
+colnames(homo.fr) <- c("FR1", "FR2")
+reducedDim(homolog.sce, "FR") <- as.matrix(homo.fr)
+homo.fr$CellID <- colnames(homolog.sce)
+
+homo.clust.df <- data.frame("CellID"=colnames(homolog.sce),
+                             "Species.Cluster"=as.character(membership(cluster_louvain(homo.knn, resolution=0.7))))
+homo.max.clust <- max(as.numeric(homo.clust.df$Species.Cluster))
+homo.clust.df$Species.Cluster <- factor(as.character(homo.clust.df$Species.Cluster),
+                                         levels=c(1:homo.max.clust))
+clust.cols <- colorRampPalette(pal_d3("category20")(20))(homo.max.clust)
+names(clust.cols) <- levels(homo.clust.df$Species.Cluster)
+
+red.df <- merge(homo.umap.map, homo.fr, by='CellID')
+meta.df <- as.data.frame(colData(homolog.sce))
+meta.df$CellID <- colnames(homolog.sce)
+homo.proj.merge <- Reduce(x=list(meta.df[, !colnames(meta.df) %in% c("Species.Cluster")], red.df, homo.clust.df),
+                           f=function(x, y) merge(x, y, by='CellID'))
+
+colData(homolog.sce)$Species.Cluster <- homo.clust.df$Species.Cluster
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(homo.proj.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(data=homo.proj.merge[, c("UMAP1", "UMAP2")],
+                   pointsize=0.5, colour="grey80") +
+  geom_scattermore(aes(colour=Species), pointsize=1) +
+  scale_colour_d3() +
+  theme_cowplot() +
+  facet_wrap(~Species) +
+  guides(colour=guide_legend(title="Species", override.aes=list(size=3, shape=15)))  +
+  NULL
+    
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Mouse-toHuman-Species.png",
+       height=4.95, width=7.95, dpi=300, bg = 'white')
+```
+
+There is some overlap/integration based on the co-positioning of cells int his UMAP. Broadly there is still a very strong separation. Do we see the same thing for human-human data?
+
+```{r}
+table(homo.proj.merge$TEC.Label, homo.proj.merge$Species.Cluster)
+```
+
+
+```{r}
+table(homo.proj.merge$Cluster, homo.proj.merge$Species.Cluster)
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=4.95, fig.width=9.95}
+ggplot(homo.proj.merge,
+       aes(x=UMAP1, y=UMAP2)) +
+  geom_scattermore(data=homo.proj.merge[, c("UMAP1", "UMAP2")],
+                   pointsize=0.5, colour="grey80") +
+  geom_scattermore(aes(colour=Species.Cluster), pointsize=1) +
+  scale_colour_manual(values = clust.cols) +
+  theme_cowplot() +
+  facet_wrap(~Species) +
+  guides(colour=guide_legend(title="Species.Cluster", override.aes=list(size=3, shape=15)))  +
+  NULL
+    
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Mouse-toHuman-Clusters.png",
+       height=4.95, width=7.95, dpi=300, bg = 'white')
+```
+
+
+```{r}
+homology.goi <- c("Krt5", "Krt8", "Krt13", "Krt14", "Krt15", "Krt17", "Bcam", "Fn1", "Clu", "Timp1", "Ifitm3", "Thy1")
+homology.goi.exprs <- as.data.frame(as.matrix(t(logcounts(homolog.sce[rowData(homolog.sce)$MM.Symbol %in% homology.goi, ]))))
+colnames(homology.goi.exprs) <- rowData(homolog.sce[colnames(homology.goi.exprs), ])$MM.Symbol
+homology.goi.exprs$CellID <- colnames(homolog.sce)
+
+homology.meta.merge <- merge(homo.proj.merge[, !colnames(homo.proj.merge) %in% homology.goi], homology.goi.exprs[, ], by="CellID")
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=6.95, fig.width=12.95}
+krt.p.list <- list()
+plot.genes <- intersect(colnames(homology.goi.exprs), homology.goi)
+
+for(x in seq_along(plot.genes)){
+  x.df <- homology.meta.merge[, c("UMAP1", "UMAP2", "Species", plot.genes[x])]
+  colnames(x.df) <- c("UMAP1", "UMAP2", "Species", "Gene")
+  x.p <- ggplot(x.df,
+                aes(x=UMAP1, y=UMAP2)) +
+    geom_scattermore(data=x.df[, c("UMAP1", "UMAP2")],
+                     colour='grey80', pointsize=0.5) +
+    geom_scattermore(aes(colour=Gene), pointsize=1) +
+    scale_colour_distiller(palette = "Purples", direction=1) +
+    theme_cowplot() +
+    facet_wrap(~Species) +
+    guides(colour=guide_colorbar(title=plot.genes[x]))  +
+    NULL
+  
+  krt.p.list[[x]] <- x.p
+}
+
+plot_grid(plotlist=krt.p.list)
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Human-toMouse-StemSignatureGenes.png",
+       height=6.95, width=12.95, dpi=300, bg = 'white')
+```
+
+## Neighbourhood correlation analysis
+
+Use the nhood correlation analysis approach to identify the co-corresponding neighbourhoods between the human and mouse TEC.
+
+```{r}
+set.seed(42)
+ragga.milo <- Milo(ragga.homo.sce)
+ragga.milo <- buildGraph(ragga.milo, k=50, d=50)
+ragga.milo <- makeNhoods(ragga.milo, k=50, d=50, p=0.1, reduced_dims="PCA", refinement_scheme="graph")
+ragga.milo <- countCells(ragga.milo, samples="Sample", meta.data=as.data.frame(colData(ragga.milo)))
+ragga.milo <- buildNhoodGraph(ragga.milo)
+ragga.milo <- calcNhoodExpression(ragga.milo, assay="logcounts")
+```
+
+```{r}
+milo.list <- list("Mouse"=perinatal.milo, "Ragazzini.Human"=ragga.milo)
+```
+
+Select the set of common HVGs for this cross-nhood comparison.
+
+```{r}
+hvg.list <- lapply(milo.list,
+                   FUN=function(MILO){
+                     hvg.stat <- modelGeneVar(MILO)
+                     hvg.stat$FDR[is.na(hvg.stat$FDR)] <- 1
+                     hvg.stat$GeneID <- rownames(hvg.stat)
+                     hvg.stat$GeneID[hvg.stat$FDR < 0.1]
+                     })
+
+all.hvgs <- unique(unlist(hvg.list))
+message("Found ", length(all.hvgs), " hvgs in total")
+common.genes <- Reduce(lapply(milo.list, rownames), f=intersect)
+common.hvg <- intersect(all.hvgs, common.genes)
+message(length(common.hvg), " hvgs commonly expressed across datasets")
+
+milo.names <- names(milo.list)
+
+for(x in seq_along(milo.names)){
+  x.names <- milo.names[x]
+  x.milo <- calcNhoodExpression(milo.list[[x.names]], subset.row=common.hvg)
+  milo.list[[x.names]] <- x.milo
+}
+```
+
+Loop over the data and write the correlation matrices to file.
+
+```{r}
+nhood.corr.list <- list()
+n.data <- length(milo.names)
+for(i in seq_along(milo.names)){
+  i.milo <- milo.list[[milo.names[i]]]
+  ij <- i
+  for(j in seq_along(c(1:n.data))){
+      if(i != j){
+          j.milo <- milo.list[[milo.names[j]]]
+
+          ij.cor <- cor(nhoodExpression(i.milo), nhoodExpression(j.milo))
+      	  rownames(ij.cor) <- paste(milo.names[i], colnames(nhoods(i.milo)), sep="_")
+      	  colnames(ij.cor) <- paste(milo.names[j], colnames(nhoods(j.milo)), sep="_")
+      	  nhood.corr.list[[paste(milo.names[i], milo.names[j], sep="-")]] <- ij.cor
+
+          ij.file <- paste("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal", milo.names[j], milo.names[i], "CorrMatrix.tsv", sep="-")
+          write.table(ij.cor, file=ij.file, sep="\t", row.names=TRUE, quote=FALSE)
+      }
+   }
+}
+```
+
+Now we find the nhoods with the highest correlations between data sets.
+
+```{r}
+pair.names <- names(nhood.corr.list)
+
+for(x in seq_along(pair.names)){
+  x.p1 <- unlist(strsplit(pair.names[x], split="-", fixed=TRUE))[1]
+  x.p2 <- unlist(strsplit(pair.names[x], split="-", fixed=TRUE))[2]
+  x.cor <- nhood.corr.list[[pair.names[x]]]
+
+  p1.max <- apply(x.cor, 1, max)
+  # match the column ID
+  print(head(p1.max))
+  print(class(p1.max))
+  p1.nhood.idx <- do.call(args=lapply(p1.max, FUN=function(P1X){
+   	       	                     .idx <- which(x.cor == P1X, arr.ind=TRUE)
+			 	     paste(colnames(x.cor[.idx[1, 1], .idx[1, 2], drop=FALSE]), collapse=", ") 
+			 	 }), what=rbind.data.frame)
+  colnames(p1.nhood.idx) <- c(paste0(x.p2, ".Nhood"))
+  p1.nhood.idx[, paste0(x.p1, ".Nhood")] <- names(p1.max)
+      
+  p2.max <- apply(x.cor, 2, max)
+  p2.nhood.idx <- do.call(args=lapply(p2.max, FUN=function(P2X){
+  	       	         	      .idx <- which(x.cor == P2X, arr.ind=TRUE)
+			 	      paste(rownames(x.cor[.idx[, 1], .idx[, 2], drop=FALSE]), collapse=", ")
+			  }), what=rbind.data.frame)
+  colnames(p2.nhood.idx) <- c(paste0(x.p1, ".Nhood"))
+  p2.nhood.idx[, paste0(x.p2, ".Nhood")] <- names(p2.max)
+
+  write.table(p1.nhood.idx, paste("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal", paste0(x.p1, "to", x.p2), "MatchNhoods.tsv", sep="-"), 
+              quote=FALSE, row.names=FALSE, sep="\t")
+  write.table(p2.nhood.idx, paste("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal", paste0(x.p2, "to", x.p1), "MatchNhoods.tsv", sep="-"), 
+              quote=FALSE, row.names=FALSE, sep="\t")
+ }
+```
+
+Add the nhood annotations to each Milo object.
+
+```{r}
+perinatal.res <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res-ZsGCompare.txt",
+                            sep="\t", header=TRUE, stringsAsFactors=FALSE)
+colnames(perinatal.res) <- paste0("Mouse.", colnames(perinatal.res)) # Perinatal Milo results ZsGreen+ and ZsGreen-
+
+perinatal.nhoods <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_Nhood-NhoodGroup_map.tsv",
+                               sep="\t", header=TRUE, stringsAsFactor=FALSE)
+colnames(perinatal.nhoods) <- c("Mouse.Nhood", "Mouse.NhoodIdx", "Mouse.NhoodGroup") # Perinatal NhoodIdx - Nhood mapping
+```
+
+
+```{r}
+set.seed(42)
+ragga.nhoods <- nhoods(ragga.milo)
+ragga.fake.res <- data.frame("logFC"=rep(1, ncol(ragga.nhoods)), "SpatialFDR"=rep(0.1, ncol(ragga.nhoods)), "Nhood"=seq_len(ncol(ragga.nhoods)))
+ragga.fake.res <- groupNhoods(ragga.milo, ragga.fake.res, da.fdr=1, overlap=5)
+ragga.fake.res <- annotateNhoods(ragga.milo, ragga.fake.res, coldata_col="Louvain.Cluster")
+ragga.fake.res <- annotateNhoods(ragga.milo, ragga.fake.res, coldata_col="Sample")
+```
+
+
+```{r}
+plotNhoodGroups(ragga.milo, milo_res=ragga.fake.res) + 
+  guides(fill=guide_legend(override.aes=list(size=3), ncol=2)) +
+  NULL
+```
+
+```{r}
+ragga.human.nhoods <- data.frame("Ragazzini.Human.NhoodIdx"=unlist(nhoodIndex(ragga.milo)), "Ragazzini.Human.Nhood"=seq_len(ncol(nhoods(ragga.milo))))
+colnames(ragga.fake.res) <- paste0("Ragazzini.Human.", colnames(ragga.fake.res))
+```
+
+
+
+
+
+```{r}
+mouse.ragga.match <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal-MousetoRagazzini.Human-MatchNhoods.tsv",
+                                sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+mouse.ragga.cor <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal-Ragazzini.Human-Mouse-CorrMatrix.tsv",
+                              sep="\t", header=TRUE, stringsAsFactors = FALSE)
+
+# add the correlation coefficient between best-matching nhoods
+mouse.ragga.match$Corr <- NA
+for(i in seq_len(nrow(mouse.ragga.match))){
+    i.peri <- mouse.ragga.match[i, , drop=FALSE]$Mouse.Nhood
+    i.hum <- mouse.ragga.match[i, , drop=FALSE]$Ragazzini.Human.Nhood
+    mouse.ragga.match[i, ]$Corr <- mouse.ragga.cor[i.hum, i.peri]
+}
+
+mouse.ragga.match$Mouse.NhoodIdx <- gsub(mouse.ragga.match$Mouse.Nhood, pattern="(Mouse)_([0-9]+)", replacement="\\2")
+mouse.ragga.match$Ragazzini.Human.NhoodIdx <- gsub(mouse.ragga.match$Ragazzini.Human.Nhood, pattern="(Ragazzini\\.Human)_([0-9]+)", replacement="\\2")
+colnames(mouse.ragga.match) <- c("Ragazzini.Human.NhoodName", "Mouse.Nhood.Name", "Corr", "Mouse.NhoodIdx", "Ragazzini.Human.NhoodIdx")
+mouse.ragga.match.merge <- merge(mouse.ragga.match, ragga.human.nhoods, by=c("Ragazzini.Human.NhoodIdx"))
+mouse.ragga.match.merge <- merge(mouse.ragga.match.merge, ragga.fake.res, by=c("Ragazzini.Human.Nhood"))
+
+mouse.to.human.full <- merge(mouse.ragga.match.merge, perinatal.nhoods[, c("Mouse.Nhood", "Mouse.NhoodIdx")], by=c("Mouse.NhoodIdx"))
+mouse.to.human.full <- merge(mouse.to.human.full, perinatal.res, by="Mouse.Nhood")
+
+ggplot(mouse.ragga.match, aes(x=Corr)) +
+  geom_histogram() +
+  theme_cowplot() +
+  NULL
+```
+
+The correlations aren't massive - average is ~0.6, noting that this is defined in a space of 1:1 homologous HVGs defined from the mouse data.
+
+```{r, warning=FALSE, message=FALSE}
+mouse.to.human.alluvium <- mouse.to.human.full[, c("Mouse.Nhood", "Mouse.NhoodIdx", "Mouse.Nhood.TEC", "Ragazzini.Human.Louvain.Cluster",
+                                                   "Ragazzini.Human.Nhood", "Ragazzini.Human.NhoodIdx", "Ragazzini.Human.NhoodGroup")]
+
+
+# max.peri <- max(peri.to.age.alluvium$Perinatal_Milo.NhoodGroup)
+max.human <- max(mouse.to.human.alluvium$Ragazzini.Human.NhoodGroup)
+
+mouse.to.human.alluvium$Mouse_Milo.Nhood.TEC <- paste0("Mouse_", mouse.to.human.alluvium$Mouse.Nhood.TEC)
+mouse.to.human.alluvium$Human_Milo.NhoodGroup <- paste0("Human_", mouse.to.human.alluvium$Ragazzini.Human.NhoodGroup)
+
+alluvium.df <- as.data.frame(table(mouse.to.human.alluvium$Mouse.Nhood.TEC, mouse.to.human.alluvium$Ragazzini.Human.NhoodGroup))
+colnames(alluvium.df) <- c("Mouse.Group", "Ragazzini.Human", "Freq")
+alluvium.df$Perinatal <- as.character(alluvium.df$Mouse.Group)
+alluvium.df$Perinatal <- gsub(unlist(lapply(strsplit(alluvium.df$Perinatal, split=" ", fixed=TRUE),
+                                                  FUN=function(PX) paste(tail(PX, 1)))),
+                                    pattern="(\\()([0-9]+)(\\))", replacement="\\2")
+alluvium.df$Mouse.Group <- factor(gsub(as.character(alluvium.df$Mouse.Group), pattern="Perinatal_", replacement=""),
+                                      levels=rev(c("Immature cTEC (1)", "Cycling cTEC (2)", "cTEC late (3)", "cTEC early (4)",
+                                                   "mTEC (5)", "Intertypical (6)", "Post-Aire mTEC (7)", "cTEC early (8)",
+                                                   "ILC-like (9)", "Cycling mTEC (10)", "Sca1+ mTEC (11)", "cTEC late (12)",
+                                                   "Intertypical cTEC-biased (13)", "ILC-like (14)", "Cycling Intertypical (15)",
+                                                   "Tuft-like mTEC (16)", "ILC-like (17)", "Aire+ mTEC (18)")))
+alluvium.df$Ragazzini.Human <- factor(gsub(alluvium.df$Ragazzini.Human, pattern="(\\S+_)([0-9]+)", replacement="\\2"),
+                                      levels=c(1:max.human))
+
+max.peri <- length(unique(alluvium.df$Perinatal))
+alluvium.df$Perinatal <- factor(alluvium.df$Perinatal,
+                                levels=c(1:max.peri))
+
+# convert to lodes form to use geom_flow and ggrepel
+alluvium.lodes <- to_lodes_form(alluvium.df, axes=c(2, 4), key="Dataset", id="Nhood", value=Group)
+
+samp.cols <- rev(colorRampPalette(pal_d3("category20")(20))(max.peri))
+names(samp.cols) <- levels(alluvium.df$Mouse.Group)
+```
+
+
+
+
+```{r, fig.height=7.15, fig.width=9.95}
+ggplot(alluvium.lodes, aes(x=Dataset, stratum=Group, alluvium=Nhood, y=Freq)) +
+    geom_flow(aes(fill=Mouse.Group), width=1/8) +
+    geom_stratum(fill='grey', color = "black", width=1/12) +
+    theme_cowplot() + 
+    geom_text_repel(aes(label = ifelse(as.numeric(Dataset) == 2, as.character(Group), NA)),
+                    stat = "stratum", size = 4, direction = "y", nudge_x = -0.1) +
+    geom_text_repel(aes(label = ifelse(as.numeric(Dataset) == 1, as.character(Group), NA)),
+                    stat = "stratum", size = 4, direction = "y", nudge_x = 0.1) +
+    scale_x_discrete(limits = c("Perinatal", "Ragazzini.Human"), expand = c(0.1, 0)) +
+    scale_fill_manual(values=rev(samp.cols), breaks=rev(names(samp.cols))) +
+    guides(fill=guide_legend(title="Perinatal\nTEC Group", override.aes=list(alpha=1, colour='black'), ncol=1)) +
+    theme(axis.line=element_blank(), axis.text.y=element_blank(),
+          axis.title=element_blank(), axis.text.x=element_text(size=20), axis.ticks=element_blank()) +
+    NULL
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Alluvium_RagazzinitoMouse_NhoodGroupMap.png",
+       height=7.15, width=9.95, dpi=300, bg='white')
+```
+
+
+
+

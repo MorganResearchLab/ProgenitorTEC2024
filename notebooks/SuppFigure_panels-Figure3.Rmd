@@ -44,10 +44,10 @@ rownames(gene.df) <- gene.df$ensembl_gene_id
 ```
 
 ```{r "loading Wells et al data"}
-all.controls <- read.csv("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/GSE137699_allSamples.csv.gz",
+all.controls <- read.csv("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/data/GSE137699_allSamples.csv.gz",
                          header=TRUE)
 
-all.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/GSE137699_RAW/all_meta.csv",
+all.meta <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/data/GSE137699_RAW/all_meta.csv",
                        header=TRUE, sep=",")
 rownames(all.meta) <- all.meta$X
 all.meta$stage[all.meta$stage %in% c("Aire_positive~")] <- "Aire_positive"
@@ -111,7 +111,7 @@ our perinatal iTEC data set and cross-compare the cell labels.
 
 ```{r "load perinatal data"}
 # derive all of the relevant meta data
-itec.milo <- readRDS("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Milo.RDS")
+itec.milo <- readRDS("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_Milo.RDS")
 
 colData(itec.milo)$SortType <- gsub(itec.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
 colData(itec.milo)$TECSort <- gsub(itec.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
@@ -125,7 +125,7 @@ itec.umap <- data.frame("CellID"=colnames(itec.milo), "UMAP1"=reducedDim(itec.mi
                              "UMAP2"=reducedDim(itec.milo, "UMAP")[, 2])
 itec.meta <- merge(itec.meta, itec.umap, by='CellID')
 
-milo.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGadjusted.txt",
+milo.meta <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGadjusted.txt",
                         sep="\t", header=TRUE)
 milo.meta$NhoodIdx <- colnames(nhoods(itec.milo))
 ```
@@ -287,7 +287,7 @@ facet.mnn <- ggplot(joint.mnn.umap, aes(x=UMAP1, y=UMAP2, colour=Batch)) +
 plot_grid(plot_grid(pre.mnn, post.mnn),
           facet.mnn, byrow=FALSE, ncol=1)
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Wells_iTEC_integration.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Wells_iTEC_integration.png",
        height=6, width=9, dpi=300, bg='white')
 ```
 
@@ -385,7 +385,7 @@ ggplot(alluvium.lodes, aes(x=Dataset, stratum=Group, alluvium=Nhood, y=Freq)) +
           axis.title=element_blank(), axis.text.x=element_text(size=20), axis.ticks=element_blank()) +
     NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Alluvium_WellstoiTEC_NhoodGroupMap.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Alluvium_WellstoiTEC_NhoodGroupMap.png",
        height=7.15, width=9.95, dpi=300, bg='white')
 ```
 
@@ -412,7 +412,7 @@ ggplot(joint.meta.merge, aes(x=UMAP1, y=UMAP2)) +
   facet_wrap(~Batch, nrow=1) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Wells_iTEC_integratedUMAP.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Wells_iTEC_integratedUMAP.png",
        height=4.5, width=9, bg='white', dpi=300)
 ```
 
@@ -431,7 +431,7 @@ ggplot(wells.meta.merge,
                              override.aes=list(size=2.5))) +
   NULL
 
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Wells_integratedUMAP.png",
+ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Wells_integratedUMAP.png",
        height=4.5, width=6, bg='white', dpi=300)
 ```
 
