@@ -29,7 +29,6 @@ library(biomaRt)
 library(viridis)
 library(ComplexHeatmap)
 library(circlize)
-library(CellChat)
 library(msigdbr)
 library(fgsea)
 library(enrichR)
@@ -44,10 +43,10 @@ The input is the Milo object which contains the post-QC single-cells, and the in
 
 ```{r}
 # derive all of the relevant meta data
-perinatal.milo <- readRDS("~/Dropbox/Mike Morgan/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
 sf.df <- data.frame("CellID"=colnames(perinatal.milo), "SizeFactors"=sizeFactors(perinatal.milo))
 
-itec.cells <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC.txt",
+itec.cells <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC.txt",
                          sep="\t", header=FALSE, stringsAsFactors=FALSE)
 
 itec.sce <- SingleCellExperiment(assays=list("counts"=counts(perinatal.milo[, colnames(perinatal.milo) %in% itec.cells$V1]),
@@ -63,15 +62,14 @@ colData(itec.sce)$Replicate <- gsub(itec.sce$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_
 sink(file="/dev/null") # this only works on linux/mac
 rm(list=c("perinatal.milo"))
 gc()
-sink(file=NULL)
 ```
 
 
 ```{r}
-perinatal.goi.df <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Newborn/Perinatal_GeneGOI.tsv",
+perinatal.goi.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_GeneGOI.tsv",
                          sep="\t", header=TRUE, stringsAsFactors=FALSE)
 
-perinatal.protein.df <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Newborn/Perinatal_ProteinGOI.tsv",
+perinatal.protein.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_ProteinGOI.tsv",
                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
 ```
 
@@ -130,7 +128,7 @@ ggplot(meta.proj.merge,
     # facet_wrap(~SortType) +
     NULL
     
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Perinatal_iTEC-SortType.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Perinatal_iTEC-SortType.png",
        height=3.95, width=4.95, dpi=300, bg = 'white')
 ```
 
@@ -149,7 +147,7 @@ ggplot(meta.proj.merge,
     # facet_wrap(~SortType) +
     NULL
     
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
        height=3.95, width=4.95, dpi=300, bg = 'white')
 ```
 
@@ -166,7 +164,7 @@ ggplot(meta.proj.merge,
     facet_wrap(~SortType) +
     NULL
     
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Perinatal_iTEC-Cxcl12.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Perinatal_iTEC-Cxcl12.png",
        height=3.95, width=7.95, dpi=300, bg = 'white')
 ```
 
@@ -183,7 +181,7 @@ ggplot(meta.proj.merge,
     facet_wrap(~SortType) +
     NULL
     
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-Cxcl12.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-Cxcl12.png",
        height=3.95, width=7.95, dpi=300, bg = 'white')
 ```
 
@@ -212,7 +210,7 @@ for(x in seq_along(goi)){
         # facet_wrap(~SortType) +
         NULL
     
-    ggsave(plot=fr.plot, filename=paste0("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-FR_iTEC_", gtitle, ".png"),
+    ggsave(plot=fr.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-FR_iTEC_", gtitle, ".png"),
        height=3.95, width=4.15, dpi=300, bg = 'white')
     
     umap.plot <- ggplot(x.df,
@@ -225,7 +223,7 @@ for(x in seq_along(goi)){
         # facet_wrap(~SortType) +
         NULL
     
-    ggsave(plot=umap.plot, filename=paste0("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-UMAP_iTEC_", gtitle, ".png"),
+    ggsave(plot=umap.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-UMAP_iTEC_", gtitle, ".png"),
        height=3.95, width=4.15, dpi=300, bg = 'white')
     
     plot.list[[goi[x]]] <- plot_grid(fr.plot, umap.plot, labels=c("FR", "UMAP"))
@@ -257,7 +255,7 @@ for(x in seq_along(goi)){
         # facet_wrap(~SortType) +
         NULL
     
-    ggsave(plot=fr.plot, filename=paste0("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-FR_iTEC_", gtitle, "-gt0.png"),
+    ggsave(plot=fr.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-FR_iTEC_", gtitle, "-gt0.png"),
        height=3.95, width=4.15, dpi=300, bg = 'white')
     
     umap.plot <- ggplot(x.df,
@@ -270,7 +268,7 @@ for(x in seq_along(goi)){
         # facet_wrap(~SortType) +
         NULL
     
-    ggsave(plot=umap.plot, filename=paste0("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-UMAP_iTEC_", gtitle, "-gt0.png"),
+    ggsave(plot=umap.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-UMAP_iTEC_", gtitle, "-gt0.png"),
        height=3.95, width=4.15, dpi=300, bg = 'white')
     
 }
@@ -329,7 +327,7 @@ cells represent?
 plotNhoodGraphDA(itec.milo, milo_res=itec.zsg.res, alpha=0.1, layout='FR') +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsG_Dayadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsG_Dayadjusted.png",
            heigh=5.15, width=7.95, dpi=300)
 ```
 
@@ -339,7 +337,7 @@ This is mostly a sense check to show that cells moving into the cortical lineage
 plotNhoodGraphDA(itec.milo, milo_res=itec.zsg.res, alpha=0.1, layout='UMAP') +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsG_Dayadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsG_Dayadjusted.png",
            heigh=3.15, width=4.95, dpi=300)
 ```
 
@@ -362,7 +360,7 @@ cells represent?
 plotNhoodGraphDA(itec.milo, milo_res=itec.res, alpha=0.1, layout='FR') +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-Day_ZsGadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-Day_ZsGadjusted.png",
            heigh=5.15, width=7.95, dpi=300)
 ```
 
@@ -372,7 +370,7 @@ This is mostly a sense check to show that cells moving into the cortical lineage
 plotNhoodGraphDA(itec.milo, milo_res=itec.res, alpha=0.1, layout='UMAP') +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-Day_ZsGadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-Day_ZsGadjusted.png",
            heigh=4.15, width=4.95, dpi=300)
 ```
 
@@ -385,7 +383,7 @@ can only be really determined by a different lineage tracing scheme that begins 
 plotNhoodGraphDA(itec.milo, milo_res=itec.res, alpha=0.1, layout='FR') +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-Day_ZsGadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-Day_ZsGadjusted.png",
            heigh=5.15, width=7.95, dpi=300)
 ```
 
@@ -423,7 +421,7 @@ sorting.
 ```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
 plotNhoodGraphDA(itec.milo, milo_res=zsgp.itec.int.res, alpha=0.1, layout='FR')
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsGpos_Day_TECsortadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsGpos_Day_TECsortadjusted.png",
            heigh=5.95, width=7.95, dpi=300)
 ```
 
@@ -431,7 +429,7 @@ ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_M
 ```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
 plotNhoodGraphDA(itec.milo, milo_res=zsgp.itec.int.res, alpha=0.1, layout='UMAP')
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGpos_Day_TECsortadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGpos_Day_TECsortadjusted.png",
            height=3.95, width=4.95, dpi=300)
 ```
 
@@ -463,7 +461,7 @@ cTEC/mTEC sorting.
 ```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
 plotNhoodGraphDA(itec.milo, milo_res=zsgn.itec.int.res, alpha=0.1, layout='FR')
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsGneg_Day_TECsortadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsGneg_Day_TECsortadjusted.png",
            heigh=5.95, width=7.95, dpi=300)
 ```
 
@@ -471,7 +469,7 @@ ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_M
 ```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
 plotNhoodGraphDA(itec.milo, milo_res=zsgn.itec.int.res, alpha=0.1, layout='UMAP')
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGneg_Day_TECsortadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGneg_Day_TECsortadjusted.png",
            height=3.95, width=4.95, dpi=300)
 ```
 
@@ -508,7 +506,7 @@ If we explicitly test the interaction between time and ZsGreen sort fraction we 
 ```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
 plotNhoodGraphDA(itec.milo, milo_res=zsg.itec.int.res, alpha=0.1, layout='FR')
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsGVsDayinteraction_TECsortadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-ZsGVsDayinteraction_TECsortadjusted.png",
            heigh=5.95, width=7.95, dpi=300)
 ```
 
@@ -516,7 +514,7 @@ ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_M
 ```{r, warning=FALSE, message=FALSE, fig.height=5.95, fig.width=7.95}
 plotNhoodGraphDA(itec.milo, milo_res=zsg.itec.int.res, alpha=0.1, layout='UMAP')
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGVsDayinteraction_TECsortadjusted.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGVsDayinteraction_TECsortadjusted.png",
            heigh=3.95, width=4.95, dpi=300)
 ```
 
@@ -527,7 +525,7 @@ set.seed(101)
 itec.res <- groupNhoods(itec.milo, itec.res, da.fdr=0.1, overlap=5, merge.discord=FALSE)
 
 nhood.df <- data.frame("NhoodIdx"=colnames(nhoods(itec.milo)), "Nhood"=seq_len(ncol(nhoods(itec.milo))))
-write.table(nhood.df, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC_Nhood-NhoodGroup_map.tsv",
+write.table(nhood.df, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC_Nhood-NhoodGroup_map.tsv",
             sep="\t", quote=FALSE, row.names=FALSE)
 
 n.groups <- length(unique(itec.res$NhoodGroup))
@@ -547,7 +545,7 @@ plotNhoodGroups(x=itec.milo, milo_res=itec.res, layout='FR') +
     scale_fill_manual(values=samp.cols) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/FR_iTEC_ZsGreen-NhoodGroups.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_iTEC_ZsGreen-NhoodGroups.png",
            height=5.25, width=6.95)
 ```
 
@@ -558,7 +556,7 @@ plotNhoodGroups(itec.milo, itec.res, layout='UMAP') +
                              override.aes=list(size=4, shape=22))) +
     scale_fill_manual(values=samp.cols) +
     NULL
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_iTEC_ZsGreen-NhoodGroups.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_iTEC_ZsGreen-NhoodGroups.png",
            height=4.25, width=7.95)
 ```
 
@@ -568,7 +566,7 @@ The nhood clustering granularity is slightly artificial here. Nonetheless, I'll 
 itec.group.markers <- findNhoodGroupMarkers(itec.milo, da.res=itec.res,
                                                  aggregate.samples=TRUE, sample_col="HTO")
 
-write.table(itec.group.markers, file="~/Dropbox/Mike Morgan/AgeingExperiment/Newborn/Perinatal_iTEC_NhoodGroup_Markers.tsv",
+write.table(itec.group.markers, file="~/Dropbox/AgeingExperiment/Newborn/Perinatal_iTEC_NhoodGroup_Markers.tsv",
             row.names=FALSE, sep="\t", quote=FALSE)
 ```
 
@@ -640,7 +638,7 @@ col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
                                col=list("NhoodGroup"=samp.cols,
                                         "logFC"=lfc.cols))
 
-# png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker_iTEC-ZsGreen-Nhood_heatmap.png",
+# png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker_iTEC-ZsGreen-Nhood_heatmap.png",
 #     height=13.15, width=9.15, res=300, units="in")
 # Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
 #         # column_split=annot.df[col.order, ]$NhoodGroup,
@@ -662,7 +660,7 @@ is not known. What transcription factors are also marker genes?
 
 ```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=7.95}
 nhood.groups <- unique(itec.res$NhoodGroup)
-mouse.tf <- read.table("~/Dropbox/Mike Morgan/Genesets/GO_TF_mm10.tsv", sep="\t", header=TRUE, stringsAsFactors=FALSE)
+mouse.tf <- read.table("~/Dropbox/Genesets/GO_TF_mm10.tsv", sep="\t", header=TRUE, stringsAsFactors=FALSE)
 
 tf.gene.list <- list()
 for(x in seq_along(nhood.groups)){
@@ -721,7 +719,7 @@ col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
                                col=list("NhoodGroup"=samp.cols,
                                         "logFC"=lfc.cols))
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker-TFs_iTEC-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker-TFs_iTEC-ZsGreen-Nhood_heatmap.png",
     height=13.15, width=9.15, res=300, units="in")
 Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
         # column_split=annot.df[col.order, ]$NhoodGroup,
@@ -782,7 +780,7 @@ pTEC.res <- as.data.frame(topTags(glmQLFTest(i.fit, coef=ncol(i.agg.mod)),
 pTEC.res$GeneID <- rownames(pTEC.res)
 pTEC.res <- merge(pTEC.res, gene.df, by.x='GeneID', by.y='ensembl_gene_id')
 
-write.table(pTEC.res, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_Ly6d_DEGs.tsv",
+write.table(pTEC.res, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Ly6d_DEGs.tsv",
             sep="\t", quote=FALSE, row.names=FALSE)
 table(pTEC.res$FDR < 0.01)
 ```
@@ -820,9 +818,110 @@ ggplot(pTEC.res, aes(x=logFC, y=-log10(FDR), colour=FDR < 0.1)) +
         axis.title=element_text(size=14, face="bold", family="Roboto")) +
   NULL
   
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-volcano.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-volcano.png",
        height=5, width=8, dpi=300, bg='white')
 ```
+
+# Ly6d DGE + Functional enrichment analysis
+
+### GSEA - Hallmark
+
+```{r}
+# get pathways as a name list, one slot per pathway
+ly6dp.lfc.ranks <- pTEC.res$logFC
+names(ly6dp.lfc.ranks) <- pTEC.res$external_gene_name
+test.path.df <- msigdbr(species="Mus musculus", category="C2", subcategory="CGP")
+# test.path.df <- msigdbr(species="Mus musculus", category="C2", subcategory="CP:KEGG")
+# test.path.df <- msigdbr(species="Mus musculus", category="C3", subcategory="TFT:GTRD")
+test.path <- split(test.path.df$gene_symbol, test.path.df$gs_name)
+
+# make the names pretty
+names(test.path) <- gsub(names(test.path), pattern="(HALLMARK|KEGG)_(\\S*)", replacement="\\2")
+names(test.path) <- gsub(names(test.path), pattern="_", replacement=" ")
+names(test.path) <- str_to_title(names(test.path))
+
+# reactome.path <- reactomePathways(names(ly6d.lfc.ranks))
+# de-duplicate gene symbols
+ly6dp.lfc.ranks <- ly6dp.lfc.ranks[!duplicated(names(ly6dp.lfc.ranks))] 
+
+fgseaRes <- fgsea(pathways=test.path, stats=ly6dp.lfc.ranks, eps=0)
+fgseaRes <- fgseaRes[!is.na(fgseaRes$NES), ]
+head(fgseaRes[order(fgseaRes$padj), ])
+```
+
+
+```{r, height=4, width=6}
+fgseaRes <- fgseaRes[order(fgseaRes$NES), ]
+topPathways <- fgseaRes[fgseaRes$padj < 0.01, pathway]
+
+plotGseaTable(test.path[topPathways], ly6dp.lfc.ranks, fgseaRes[order(fgseaRes$NES), ], 
+              gseaParam=0.5)
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Ly6dMarkers-GSEA_HallmarkCGP.png",
+       height=6, width=6, dpi=300, bg='white')
+```
+
+
+
+```{r}
+enrich.hm.sigs <- fgseaRes$pathway[fgseaRes$padj < 0.01]
+enrich.hm.exprs <- do.call(rbind, sapply(enrich.hm.sigs, FUN=function(EX, gene.exp, gsea.df, gene.map){
+  gsea.genes <- gene.map[gene.map$external_gene_name %in% unlist(gsea.df[gsea.df$pathway %in% EX, ]$leadingEdge), ]$ensembl_gene_id
+  gsea.expr <- colSums2(gene.exp[gsea.genes, ])/length(gsea.genes)
+  gsea.expr
+  }, gsea.df=fgseaRes, gene.exp=nhoodExpression(itec.milo), gene.map=gene.df, simplify=FALSE))
+
+rownames(enrich.hm.exprs) <- enrich.hm.sigs
+colnames(enrich.hm.exprs) <- colnames(nhoodExpression(itec.milo))
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=6, fig.width=10.15}
+ht_opt$message = FALSE
+hm.exprs <- t(apply(enrich.hm.exprs, 1, scale))
+
+# hm.cols <- viridis(n=20, option='magma')
+exp.quants <- quantile(hm.exprs, c(0.01, 0.99))
+hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "purple"))
+
+annot.df <- data.frame("Nhood"=itec.zsg.res.merge$Nhood, 
+                       "TECGroup"=itec.zsg.res.merge$NhoodLabel)
+
+rownames(annot.df) <- annot.df$Nhood
+col.order <- order(annot.df$TECGroup)
+# col.order <- order(annot.df$TECGroup)
+
+max.lfc <- abs(max(annot.df$logFC))
+lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
+
+annot.df <- annot.df[, -1, drop=FALSE]
+
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
+                               col=list("TECGroup"=tec.cols))
+
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/GSEA-HallMarkCGP_iTEC-ZsGreen-Nhood_heatmap.png",
+    height=6, width=10.15, res=300, units="in")
+Heatmap(hm.exprs[, col.order], col=hm.cols,
+        use_raster=TRUE, cluster_rows=TRUE,
+        heatmap_legend_param=list(title="log\ncounts"),
+        show_column_names=FALSE, cluster_columns=FALSE,
+        show_row_names=TRUE,
+        top_annotation=col.annot)
+dev.off()
+
+
+Heatmap(hm.exprs[, col.order], col=hm.cols,
+        use_raster=TRUE, cluster_rows=TRUE,
+        heatmap_legend_param=list(title="log\ncounts"),
+        show_column_names=FALSE, cluster_columns=FALSE,
+        show_row_names=TRUE,
+        top_annotation=col.annot)
+```
+
+
+
+
 
 
 ```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=7.95}
@@ -866,7 +965,7 @@ col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
                                col=list("NhoodGroup"=samp.cols,
                                         "logFC"=lfc.cols))
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/ProgenitorMarker_iTEC-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ProgenitorMarker_iTEC-ZsGreen-Nhood_heatmap.png",
     height=7, width=9.15, res=300, units="in")
 Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
         # column_split=annot.df[col.order, ]$NhoodGroup,
@@ -962,19 +1061,19 @@ I'll add these nhood groups to all of the others results.
 
 ```{r, warning=FALSE, message=FALSE}
 itec.zsg.res.merge <- merge(itec.zsg.res, itec.sf.res[, c("Nhood", "NhoodGroup", "NhoodLabel")], by='Nhood')
-write.table(itec.zsg.res.merge, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGadjusted.txt",
+write.table(itec.zsg.res.merge, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGadjusted.txt",
             sep="\t", quote=FALSE, row.names=FALSE)
 
 zsgp.itec.int.res.merge <- merge(zsgp.itec.int.res, itec.sf.res[, c("Nhood", "NhoodGroup", "NhoodLabel")], by='Nhood')
-write.table(zsgp.itec.int.res.merge, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGPos.txt",
+write.table(zsgp.itec.int.res.merge, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGPos.txt",
             sep="\t", quote=FALSE, row.names=FALSE)
 
 zsgn.itec.int.res.merge <- merge(zsgn.itec.int.res, itec.sf.res[, c("Nhood", "NhoodGroup", "NhoodLabel")], by='Nhood')
-write.table(zsgn.itec.int.res.merge, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGNeg.txt",
+write.table(zsgn.itec.int.res.merge, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGNeg.txt",
             sep="\t", quote=FALSE, row.names=FALSE)
 
 zsg.itec.int.res.merge <- merge(zsg.itec.int.res, itec.sf.res[, c("Nhood", "NhoodGroup", "NhoodLabel")], by='Nhood')
-write.table(zsgn.itec.int.res.merge, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGDayinteraction.txt",
+write.table(zsgn.itec.int.res.merge, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Milo_res_iTEC-ZsGDayinteraction.txt",
             sep="\t", quote=FALSE, row.names=FALSE)
 ```
 
@@ -1014,7 +1113,7 @@ annot.df <- annot.df[, -1, drop=FALSE]
 col.annot <- rowAnnotation(df=annot.df[col.order, , drop=FALSE],
                            col=list("TECGroup"=tec.cols))
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker_iTEC_subset-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker_iTEC_subset-ZsGreen-Nhood_heatmap.png",
     height=5, width=11, res=300, units="in")
 Heatmap(t(hm.exprs[row.order, col.order]), col=hm.cols,
         # column_split=annot.df[col.order, ]$NhoodGroup,
@@ -1096,7 +1195,7 @@ col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
                                col=list("TECGroup"=tec.cols,
                                         "logFC"=lfc.cols))
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker_iTEC-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker_iTEC-ZsGreen-Nhood_heatmap.png",
     height=13.15, width=9.15, res=300, units="in")
 Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
         # column_split=annot.df[col.order, ]$NhoodGroup,
@@ -1157,7 +1256,7 @@ annot.df <- annot.df[, -1, drop=FALSE]
 col.annot <- rowAnnotation(df=annot.df[col.order, , drop=FALSE],
                            col=list("TECGroup"=tec.cols))
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/LineageMarker_iTEC_subset-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/LineageMarker_iTEC_subset-ZsGreen-Nhood_heatmap.png",
     height=5, width=9.15, res=300, units="in")
 Heatmap(t(hm.exprs[row.order, col.order]), col=hm.cols,
         # column_split=annot.df[col.order, ]$NhoodGroup,
@@ -1195,7 +1294,7 @@ plotNhoodGraph(itec.milo, layout='UMAP', colour_by="NhoodLabel") +
           legend.title=element_text(size=16)) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_iTEC_ZsGreen-TECGroups.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_iTEC_ZsGreen-TECGroups.png",
            height=5, width=9)
 ```
 
@@ -1224,7 +1323,7 @@ annot.df <- annot.df[, -1, drop=FALSE]
 col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
                                col=list("TECGroup"=tec.cols))
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker-TFs_iTEC-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/NhoodMarker-TFs_iTEC-ZsGreen-Nhood_heatmap.png",
     height=13.15, width=9.15, res=300, units="in")
 Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
         # column_split=annot.df[col.order, ]$NhoodGroup,
@@ -1281,7 +1380,7 @@ for(x in seq_along(goi)){
         # facet_wrap(~SortType) +
         NULL
     
-    ggsave(plot=fr.plot, filename=paste0("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-FR_iTEC_", gtitle, ".png"),
+    ggsave(plot=fr.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-FR_iTEC_", gtitle, ".png"),
        height=3.95, width=4.15, dpi=300, bg = 'white')
     
     umap.plot <- ggplot(x.df,
@@ -1294,7 +1393,7 @@ for(x in seq_along(goi)){
         # facet_wrap(~SortType) +
         NULL
     
-    ggsave(plot=umap.plot, filename=paste0("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-UMAP_iTEC_", gtitle, ".png"),
+    ggsave(plot=umap.plot, filename=paste0("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures//Perinatal-UMAP_iTEC_", gtitle, ".png"),
        height=3.95, width=4.15, dpi=300, bg = 'white')
     
     plot.list[[goi[x]]] <- plot_grid(fr.plot, umap.plot, labels=c("FR", "UMAP"))
@@ -1313,7 +1412,7 @@ plot.list
 How do the cite markers look in these TEC states?
 
 ```{r, warning=FALSE, message=FALSE}
-perinatal.protein.df <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Newborn/Perinatal_ProteinGOI.tsv",
+perinatal.protein.df <- read.table("~/Dropbox/AgeingExperiment/Newborn/Perinatal_ProteinGOI.tsv",
                                    sep="\t", header=TRUE, stringsAsFactors=FALSE)
 cite.counts <- as.matrix(perinatal.protein.df[, c("Ly6A", "CD86", "MHCI", "CD24")])
 rownames(cite.counts) <- perinatal.protein.df$CellID
@@ -1340,7 +1439,7 @@ ggplot(milo.cite.merge, aes(x=TEC.Label, y=Ly6A, fill=TEC.Label)) +
     labs(x="TEC Group", y="log CPM - Sca1 CITE") +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-Sca1-boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-Sca1-boxplot.png",
        height=2.9, width=10.8, dpi=300, bg='white')
 ```
 
@@ -1357,7 +1456,7 @@ ggplot(milo.cite.merge, aes(x=TEC.Label, y=CD24, fill=TEC.Label)) +
     labs(x="TEC Group", y="log CPM - Cd24 CITE") +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-Cd24-boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-Cd24-boxplot.png",
        height=2.9, width=10.8, dpi=300, bg='white')
 ```
 
@@ -1375,7 +1474,7 @@ ggplot(milo.cite.merge, aes(x=TEC.Label, y=MHCI, fill=TEC.Label)) +
     labs(x="TEC Group", y="log CPM - MHCII CITE") +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-MHCII-boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-MHCII-boxplot.png",
        height=2.9, width=10.8, dpi=300, bg='white')
 ```
 
@@ -1393,7 +1492,7 @@ ggplot(milo.cite.merge, aes(x=TEC.Label, y=CD86, fill=TEC.Label)) +
     labs(x="TEC Group", y="log CPM - Cd86 CITE") +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-Cd86-boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_TECGroup_CITE-Cd86-boxplot.png",
        height=2.9, width=10.8, dpi=300, bg='white')
 ```
 
@@ -1405,7 +1504,7 @@ plotDAbeeswarm(itec.zsg.res.merge, group.by='NhoodLabel', alpha=0.1) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/SortType_iTEC_Beeswarm-NhoodLabel.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/SortType_iTEC_Beeswarm-NhoodLabel.png",
        height=5.95, width=6.95, bg='white', dpi=300)
 ```
 
@@ -1419,7 +1518,7 @@ plotDAbeeswarm(itec.sf.res, group.by='NhoodLabel', alpha=0.1) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Day_iTEC_Beeswarm-NhoodLabel.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Day_iTEC_Beeswarm-NhoodLabel.png",
        height=5.95, width=6.95, bg='white', dpi=300)
 ```
 
@@ -1433,7 +1532,7 @@ plotDAbeeswarm(zsgp.itec.int.res.merge, group.by='NhoodLabel', alpha=0.1)+
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Day_iTEC-ZsGPos_Beeswarm-NhoodLabel.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Day_iTEC-ZsGPos_Beeswarm-NhoodLabel.png",
        height=5.95, width=6.95, bg='white', dpi=300)
 ```
 
@@ -1448,7 +1547,7 @@ plotDAbeeswarm(zsg.itec.int.res.merge, group.by='NhoodLabel', alpha=0.1) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/SortvsDayInteraction_iTEC_Beeswarm-NhoodLabel.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/SortvsDayInteraction_iTEC_Beeswarm-NhoodLabel.png",
        height=5.95, width=6.95, bg='white', dpi=300)
 ```
 
@@ -1484,7 +1583,7 @@ ggplot(zsgp.itec.int.res.merge, aes(x=TEC.Label, fill=DA.Dir)) +
           legend.text=element_text(size=14)) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/ZsGPos_iTEC_PropDA-TECLabel.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ZsGPos_iTEC_PropDA-TECLabel.png",
        height=3.25, width=7.25, bg='white', dpi=300)
 ```
 
@@ -1496,7 +1595,7 @@ plotDAbeeswarm(zsgn.itec.int.res.merge, group.by='NhoodLabel', alpha=0.1) +
         axis.title=element_text(size=16, face="bold", family="Roboto")) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Day_iTEC-ZsGNeg_Beeswarm-NhoodLabel.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Day_iTEC-ZsGNeg_Beeswarm-NhoodLabel.png",
        height=5.95, width=6.95, bg='white', dpi=300)
 ```
 
@@ -1532,7 +1631,7 @@ ggplot(zsgn.itec.int.res.merge, aes(x=TEC.Label, fill=DA.Dir)) +
           legend.text=element_text(size=14)) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/ZsGNeg_iTEC_PropDA-TECLabel.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ZsGNeg_iTEC_PropDA-TECLabel.png",
        height=3.25, width=7.25, bg='white', dpi=300)
 ```
 
@@ -1569,7 +1668,7 @@ ggplot(zsg.res.merge,#[zsg.res.merge$SpatialFDRZsGNeg < 0.1 | zsg.res.merge$Spat
           axis.title=element_text(size=16)) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/ZsGRatio_iTEC-boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ZsGRatio_iTEC-boxplot.png",
        height=3.25, width=6.95, dpi=300, bg='white')
 ```
 
@@ -1578,13 +1677,13 @@ that the dividing mTEC fractions tend to accumulate in the ZsG- fraction over ti
 
 ```{r, warning=FALSE, message=FALSE}
 # save the Milo object and meta-data
-saveRDS(itec.milo, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_Milo.RDS")
+saveRDS(itec.milo, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Milo.RDS")
 
-write.table(meta.proj.merge, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_meta.txt",
+write.table(meta.proj.merge, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_meta.txt",
             sep="\t", quote=FALSE, row.names=FALSE)
 
 nhood.group.df <- zsgn.itec.int.res.merge[, c("Nhood", "NhoodGroup")]
-write.table(nhood.group.df, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/iTEC_Nhood_map.tsv",
+write.table(nhood.group.df, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/iTEC_Nhood_map.tsv",
             sep="\t", row.names=FALSE, quote=FALSE)
 ```
 
@@ -1625,7 +1724,7 @@ for(i in seq_along(nhood.groups)){
 
 zsg.dge.df <- do.call(rbind.data.frame, tec.zsg.dge.list)
 zsg.dge.df <- merge(zsg.dge.df, gene.df, by.x="GeneID", by.y="ensembl_gene_id")
-write.table(zsg.dge.df, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/data/iTEC_ZsG_DGE.txt",
+write.table(zsg.dge.df, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/iTEC_ZsG_DGE.txt",
             row.names = FALSE, quote=FALSE, sep="\t")
 
 table(zsg.dge.df$TEC.Label, zsg.dge.df$FDR < 0.01)
@@ -1658,7 +1757,7 @@ ggplot(zsg.dge.df, aes(x=logCPM, y=logFC, colour=FDR < 0.01)) +
   scale_colour_manual(values=c("TRUE"="red", "FALSE"="black")) +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_ZsG_DGE-MAplot_TECfacet.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_ZsG_DGE-MAplot_TECfacet.png",
        height=9, width=12, dpi=300, bg='white')
 ```
 
@@ -1700,7 +1799,7 @@ for(i in seq_along(nhood.groups)){
 
 day.dge.df <- do.call(rbind.data.frame, tec.day.dge.list)
 day.dge.df <- merge(day.dge.df, gene.df, by.x="GeneID", by.y="ensembl_gene_id")
-write.table(day.dge.df, file="~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/data/iTEC_Day_DGE.txt",
+write.table(day.dge.df, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/iTEC_Day_DGE.txt",
             row.names = FALSE, quote=FALSE, sep="\t")
 
 table(day.dge.df$TEC.Label, day.dge.df$FDR < 0.01)
@@ -1735,7 +1834,7 @@ ggplot(day.dge.df, aes(x=logCPM, y=logFC, colour=FDR < 0.01)) +
   scale_colour_manual(values=c("TRUE"="red", "FALSE"="black")) +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Day_DGE-MAplot_TECfacet.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Day_DGE-MAplot_TECfacet.png",
        height=9, width=12, dpi=300, bg='white')
 ```
 
@@ -1785,7 +1884,7 @@ ggplot(da.enriched.df[da.enriched.df$Adjusted.P.value < 0.1 & da.enriched.df$DB 
   scale_x_reordered() +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_MSigDBHallmark-bar.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_MSigDBHallmark-bar.png",
        height=4, width=8, dpi=300)
 ```
 
@@ -1803,7 +1902,7 @@ ggplot(da.enriched.df[da.enriched.df$Adjusted.P.value < 0.1 & da.enriched.df$DB 
   scale_x_reordered() +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_Reactome-bar.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_Reactome-bar.png",
        height=5, width=13, dpi=300)
 ```
 
@@ -1822,7 +1921,7 @@ ggplot(da.enriched.df[da.enriched.df$Adjusted.P.value < 0.1 & da.enriched.df$DB 
   scale_x_reordered() +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_GOBP-bar.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_GOBP-bar.png",
        height=7, width=11, dpi=300)
 ```
 
@@ -1840,7 +1939,7 @@ ggplot(da.enriched.df[da.enriched.df$Adjusted.P.value < 0.1 & da.enriched.df$DB 
   scale_x_reordered() +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_KEGG-bar.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_KEGG-bar.png",
        height=4, width=8, dpi=300)
 ```
 
@@ -1879,7 +1978,7 @@ topPathways <- fgseaRes[fgseaRes$padj < 0.01, pathway]
 plotGseaTable(test.path[topPathways], ly6dp.lfc.ranks, fgseaRes[order(fgseaRes$NES), ], 
               gseaParam=0.5)
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Ly6dMarkers-GSEA_Hallmark.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Ly6dMarkers-GSEA_Hallmark.png",
        height=6, width=6, dpi=300, bg='white')
 ```
 
@@ -1896,7 +1995,7 @@ ggplot(fgseaRes[fgseaRes$padj < 0.01,],
   scale_x_reordered() +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_GSEA_Hallmark-bar.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_GSEA_Hallmark-bar.png",
        height=7, width=11, dpi=300)
 ```
 
@@ -1939,7 +2038,7 @@ col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
                                col=list("TECGroup"=tec.cols))
 
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/GSEA-HallMark_iTEC-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/GSEA-HallMark_iTEC-ZsGreen-Nhood_heatmap.png",
     height=6, width=10.15, res=300, units="in")
 Heatmap(hm.exprs[, col.order], col=hm.cols,
         use_raster=TRUE, cluster_rows=TRUE,
@@ -1992,7 +2091,7 @@ topPathways <- fgseaRes[fgseaRes$padj < 0.01, pathway]
 plotGseaTable(test.path[topPathways], ly6dp.lfc.ranks, fgseaRes[order(fgseaRes$NES), ], 
               gseaParam=0.5)
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Ly6dMarkers-GSEA_KEGG.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Ly6dMarkers-GSEA_KEGG.png",
        height=6, width=6, dpi=300, bg='white')
 ```
 
@@ -2011,7 +2110,7 @@ ggplot(fgseaRes[fgseaRes$padj < 0.01,],
   scale_x_reordered() +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_GSEA_KEGG-bar.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6diTEC_markers_GSEA_KEGG-bar.png",
        height=7, width=11, dpi=300)
 ```
 
@@ -2054,7 +2153,7 @@ col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
                                col=list("TECGroup"=tec.cols))
 
 
-png("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/GSEA-KEGG_iTEC-ZsGreen-Nhood_heatmap.png",
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/GSEA-KEGG_iTEC-ZsGreen-Nhood_heatmap.png",
     height=7, width=12.15, res=300, units="in")
 Heatmap(hm.exprs[, col.order], col=hm.cols,
         use_raster=TRUE, cluster_rows=TRUE,
@@ -2098,7 +2197,7 @@ ggplot(meta.proj.merge[meta.proj.merge$Is.Beta5t, ],
     # facet_wrap(~SortType) +
     NULL
     
-# ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
+# ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
 #        height=3.95, width=4.95, dpi=300, bg = 'white')
 ```
 
@@ -2117,7 +2216,7 @@ ggplot(meta.proj.merge[meta.proj.merge$Is.Cxcl12, ],
     # facet_wrap(~SortType) +
     NULL
     
-# ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
+# ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
 #        height=3.95, width=4.95, dpi=300, bg = 'white')
 ```
 
@@ -2135,7 +2234,7 @@ ggplot(meta.proj.merge[meta.proj.merge$Is.Aire, ],
     # facet_wrap(~SortType) +
     NULL
     
-# ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
+# ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
 #        height=3.95, width=4.95, dpi=300, bg = 'white')
 ```
 
@@ -2153,7 +2252,7 @@ ggplot(meta.proj.merge[meta.proj.merge$Is.Avil, ],
     # facet_wrap(~SortType) +
     NULL
     
-# ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
+# ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Perinatal_iTEC-SortType.png",
 #        height=3.95, width=4.95, dpi=300, bg = 'white')
 ```
 
@@ -2227,7 +2326,7 @@ ggplot(label.counts,
   labs(x="Days post dox", y="%Psmb11+") +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_PercentPsmb11_byDayTEC-boxplots.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_PercentPsmb11_byDayTEC-boxplots.png",
        height=6, width=11, dpi=300, bg='white')
 ```
 
@@ -2346,7 +2445,7 @@ meanAdjustedNoise <- function(gene.matrix, nhood.matrix, nhood.groups, design.df
 I've actually run this on the cluster - the code is here for reference only.
 
 ```{r}
-noise.data <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Perinatal_Milo-noiseSubsetGenes.txt",
+noise.data <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_Milo-noiseSubsetGenes.txt",
                          sep="\t", header=TRUE, stringsAsFactors=FALSE)
 gene.names <- noise.data$Gene
 noise.data <- as.data.frame(t(noise.data[, -1]))
@@ -2354,7 +2453,7 @@ colnames(noise.data) <- gene.df[gene.names, ]$external_gene_name
 noise.data[is.na(noise.data)] <- 0
 noise.data$ID <- rownames(noise.data)
 
-perinatal.nhoods <- read.table("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC_Nhood-NhoodGroup_map.tsv",
+perinatal.nhoods <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC_Nhood-NhoodGroup_map.tsv",
                                sep="\t", header=TRUE, stringsAsFactor=FALSE)
 
 noise.meta <- data.frame("ID"=rownames(noise.data),
@@ -2390,7 +2489,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Psmb11)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Psmb11-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Psmb11-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2410,7 +2509,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Ly6a)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Ly6a-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Ly6a-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2428,7 +2527,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Ly6d)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Ly6d-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Ly6d-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2445,7 +2544,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Aire)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Aire-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Aire-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2464,7 +2563,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Cd52)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Cd52-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Cd52-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 There's a similar picture for Cd52, _except_ that there is no expression detected at all in the Immature cTEC, in contrast to _Aire_.
@@ -2480,7 +2579,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Lifr)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Lifr-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Lifr-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2499,7 +2598,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Foxn1)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Foxn1-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Foxn1-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2516,7 +2615,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Tspan10)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Tspan10-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Tspan10-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2533,7 +2632,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Tbata)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Tbata-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Tbata-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2550,7 +2649,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Prss16)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Prss16-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Prss16-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2567,7 +2666,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Ccl25)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Ccl25-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Ccl25-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2584,7 +2683,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Dll4)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Dll4-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Dll4-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2600,7 +2699,7 @@ ggplot(noise.merge, aes(x=Day, fill=SortType, y=Cxcl12)) +
     scale_y_continuous(limits=c(-20, 20), oob=squish) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Cxcl12-TEClabels_boxplot.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_noise-Cxcl12-TEClabels_boxplot.png",
        height=6, width=7, bg='white', dpi=300)
 ```
 
@@ -2709,7 +2808,7 @@ ggplot(tec.zsg.melt, aes(x=TEC.Label,
   scale_y_continuous(limits=c(-1, 1)) +
     NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/Noise_ZsG_correlations_byGene.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Noise_ZsG_correlations_byGene.png",
        height=6, width=9, bg='white', dpi=300)
 ```
 
@@ -2752,7 +2851,7 @@ ggplot(tec.gene.plot.df[tec.gene.plot.df$Gene %in% c("Psmb11"), ],
   labs(x="Proportion ZsGreen+", y="Proportion Psmb11+") +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/IntertypicalTEC_ZsGreen-Psmb11_PropCorrelation-scatter.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/IntertypicalTEC_ZsGreen-Psmb11_PropCorrelation-scatter.png",
        height=5, width=9, dpi=300, bg='white')
 ```
 
@@ -2773,7 +2872,7 @@ ggplot(tec.gene.plot.df[tec.gene.plot.df$Gene %in% c("Foxn1"), ],
   labs(x="Proportion ZsGreen+", y="Proportion Foxn1+") +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/IntertypicalTEC_ZsGreen-Foxn1_PropCorrelation-scatter.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/IntertypicalTEC_ZsGreen-Foxn1_PropCorrelation-scatter.png",
        height=5, width=9, dpi=300, bg='white')
 ```
 
@@ -2793,7 +2892,7 @@ ggplot(tec.gene.plot.df[tec.gene.plot.df$Gene %in% c("Mki67"), ],
   labs(x="Proportion ZsGreen+", y="Proportion Mki67+") +
   NULL
 
-ggsave("~/Dropbox/Mike Morgan/AgeingExperiment/Perinatal_manuscript/figures/IntertypicalTEC_ZsGreen-Mki67_PropCorrelation-scatter.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/IntertypicalTEC_ZsGreen-Mki67_PropCorrelation-scatter.png",
        height=5, width=9, dpi=300, bg='white')
 ```
 

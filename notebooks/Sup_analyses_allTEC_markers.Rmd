@@ -1,0 +1,609 @@
+---
+title: "Perinatal Thymus Supp Analyses"
+output: html_notebook
+---
+
+When we consider all TEC in the experiment, what are the marker genes for each?
+
+```{r, warning=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+library(SingleCellExperiment)
+library(limma)
+library(ggrepel)
+library(miloR)
+library(ggplot2)
+library(scales)
+library(cowplot)
+library(ggsci)
+library(reshape2)
+library(ggthemes)
+library(stringr)
+library(dplyr)
+  library(tidyr)
+library(biomaRt)
+library(ComplexHeatmap)
+  library(Seurat)
+})
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+biomaRt.connection <- useMart("ENSEMBL_MART_ENSEMBL", dataset="mmusculus_gene_ensembl", host="https://useast.ensembl.org")
+
+gene.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name"),
+                 mart=biomaRt.connection)
+rownames(gene.df) <- gene.df$ensembl_gene_id
+```
+
+```{r "load perinatal data"}
+# derive all of the relevant meta data
+perinatal.milo <- readRDS("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+
+colData(perinatal.milo)$SortType <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
+colData(perinatal.milo)$TECSort <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
+colData(perinatal.milo)$Day <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\2")
+colData(perinatal.milo)$Day[colData(perinatal.milo)$Day %in% c("d20")] <- "d2"
+colData(perinatal.milo)$Replicate <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\4")
+
+perinatal.all.meta <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/All_TEC_meta-combined_labels.tsv",
+                                 header=TRUE, sep="\t")
+rownames(perinatal.all.meta) <- perinatal.all.meta$CellID
+keep.cells <- intersect(colnames(perinatal.milo), perinatal.all.meta$CellID)
+
+perinatal.all.meta <- perinatal.all.meta[keep.cells, ]
+perinatal.milo <- perinatal.milo[, colnames(perinatal.milo) %in% keep.cells]
+perinatal.all.meta$PBulk.Group <- paste(perinatal.all.meta$TEC.Label, perinatal.all.meta$Replicate, perinatal.all.meta$Day, sep="_")
+table(perinatal.all.meta$PBulk.Group)
+```
+
+To find markers of each TEC subtype, I'll pseudobulk them for each day and replicate.
+
+```{r}
+tec.design <- model.matrix(CellID ~ 0 + PBulk.Group, data=perinatal.all.meta)
+tec.ps.exprs <- logcounts(perinatal.milo) %*% tec.design[colnames(perinatal.milo), ]
+tec.ps.exprs <- t(apply(tec.ps.exprs, 1, FUN=function(GEX) GEX/colSums(tec.design)))
+tec.ps.exprs <- tec.ps.exprs[, -1]
+
+tec.ps.meta <- data.frame("Sample"=colnames(tec.ps.exprs),
+                          "TECtype"=gsub(colnames(tec.ps.exprs), pattern="(PBulk\\.Group)([[:ascii:]]+)(\\([0-9]+\\))_(\\S+)_(\\S+)", 
+                                         replacement="\\2 \\3", perl=TRUE),
+                          "Replicate"=gsub(colnames(tec.ps.exprs), pattern="(PBulk\\.Group)([[:ascii:]]+)(\\([0-9]+\\))_(\\S+)_(\\S+)", 
+                                         replacement="\\4", perl=TRUE),
+                          "Day"=gsub(colnames(tec.ps.exprs), pattern="(PBulk\\.Group)([[:ascii:]]+)(\\([0-9]+\\))_(\\S+)_(\\S+)", 
+                                     replacement="\\5", perl=TRUE),
+                          "NCell"=colSums(tec.design[, -1, drop=FALSE]))
+```
+
+Now use limma to do the differential gene expression analysis
+
+```{r}
+tec.types <- unique(tec.ps.meta$TECtype)
+tec.marker.list <- list()
+
+for(x in seq_along(tec.types)){
+  x.tec <- tec.types[x]
+  
+  x.de.meta <- tec.ps.meta
+  x.de.meta$Test <- ifelse(x.de.meta$TECtype == x.tec, 1, 0)
+  x.design <- model.matrix( ~ Test + NCell + Day, data=x.de.meta)
+  
+  x.fit <- lmFit(tec.ps.exprs, x.design)
+  x.fit <- eBayes(x.fit, robust=TRUE)
+  x.res <- topTable(x.fit, sort.by="none", number=Inf, coef=2)
+  x.res$Gene <- rownames(x.res)
+  x.res$TECtype <- x.tec
+  
+  tec.marker.list[[x.tec]] <- x.res
+  
+}
+
+tec.marker.df <- do.call(rbind.data.frame, tec.marker.list)
+table(tec.marker.df$TECtype, tec.marker.df$adj.P.Val < 0.01)
+```
+
+Some TEC types don't have any DE genes - these are the least frequent or least well defined.  Our focus is on the Ly6d+/- TEPC.
+
+```{r}
+# Ly6d+ marker genes
+ly6d.tepc.top <- tec.marker.df[tec.marker.df$TECtype %in% c("Ly6d+ Intertypical TEC  (4)") &
+                                 tec.marker.df$adj.P.Val < 0.01, ]
+ly6d.tepc.top <- ly6d.tepc.top[order(ly6d.tepc.top$logFC, decreasing=TRUE), ]
+rownames(ly6d.tepc.top) <- NULL
+
+# take the top 10 genes
+ly6d.top10 <- ly6d.tepc.top$Gene[c(1:15)]
+
+write.table(gene.df[ly6d.top10, ]$external_gene_name, 
+            file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Ly6dPositive_TEPC_markers.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+write.table(gene.df[ly6d.tepc.top$Gene, ]$external_gene_name, 
+            file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Ly6dPositive_TEPC_Allmarkers.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+
+# Ly6d- marker genes
+ly6n.tepc.top <- tec.marker.df[tec.marker.df$TECtype %in% c("Ly6d- Intertypical TEC  (1)") &
+                                 tec.marker.df$adj.P.Val < 0.01, ]
+ly6n.tepc.top <- ly6n.tepc.top[order(ly6n.tepc.top$logFC, decreasing=TRUE), ]
+rownames(ly6n.tepc.top) <- NULL
+
+# take the top 10 genes
+ly6n.top10 <- ly6n.tepc.top$Gene[c(1:15)]
+write.table(gene.df[ly6n.top10, ]$external_gene_name, 
+            file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Ly6dNegative_TEPC_markers.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+
+write.table(gene.df[ly6n.tepc.top$Gene, ]$external_gene_name, 
+            file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Ly6dNegative_TEPC_Allmarkers.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+```
+
+
+```{r, fig.height=6, fig.width=11}
+n.groups <- length(unique(tec.types))
+samp.cols <- rev(colorRampPalette(pal_d3("category20")(20))(n.groups))
+names(samp.cols) <- unique(tec.types)
+ly6d.ensembl <- gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Ly6d", "Lgr6", "Ccl21a")]
+
+marker.heat <- t(scale(t(tec.ps.exprs[unique(c(ly6d.top10, ly6n.top10, ly6d.ensembl)), ])))
+rownames(marker.heat) <- gene.df[rownames(marker.heat), ]$external_gene_name
+
+df.annot <- tec.ps.meta[, c("TECtype", "Day", "Sample")]
+rownames(df.annot) <- df.annot$Sample
+df.annot <- df.annot[colnames(marker.heat), -ncol(df.annot), drop=FALSE]
+
+day.cols <- c("orange1", "tan4")
+names(day.cols) <- c("d2", "d10")
+col.annot <- columnAnnotation(df=df.annot, col=list("TECtype"=samp.cols, "Day"=day.cols))
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/TEPC_markers-heatmap.png",
+    height=6, width=12, res=300, units="in")
+Heatmap(marker.heat, show_column_names = FALSE, show_row_names = TRUE,
+        top_annotation=col.annot, cluster_column_slices=FALSE,
+        cluster_columns=TRUE,
+        column_split=df.annot$TECtype, column_title=NULL)
+dev.off()
+
+Heatmap(marker.heat, show_column_names = FALSE, show_row_names = TRUE,
+        top_annotation=col.annot, cluster_column_slices=FALSE,
+        cluster_columns=TRUE,
+        column_split=df.annot$TECtype, column_title=NULL)
+
+```
+
+A lot of the marker genes for the Ly6d- intertypical TEC are only expressed at day 10 - they are absent or very lowly expressed at day 2 of the experiment. This effect is 
+not as marked in the Ly6d+ iTEC.  Are there any good cell surface markers in there?
+
+
+
+```{r, fig.height=6, fig.width=11}
+location.df <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "chromosome_name", "name_1006", "namespace_1003"),
+                     mart=biomaRt.connection)
+location.df <- location.df[location.df$namespace_1003 %in% c("cellular_component"), ]
+# rownames(location.df) <- location.df$ensembl_gene_id
+surface.ensembl <- unique(location.df$ensembl_gene_id[location.df$name_1006 %in% c("cell surface", "membrane", "plasma membrane raft", "plasma membrane", "outer membrane")])
+
+n.groups <- length(unique(tec.types))
+samp.cols <- rev(colorRampPalette(pal_d3("category20")(20))(n.groups))
+names(samp.cols) <- unique(tec.types)
+ly6d.ensembl <- gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Ly6d", "Lgr6", "Ccl21a")]
+
+ly6dp.surface <- intersect(ly6d.tepc.top$Gene, surface.ensembl)[c(1:15)]
+ly6dn.surface <- intersect(ly6n.tepc.top$Gene, surface.ensembl)[c(1:15)]
+
+marker.heat <- t(scale(t(tec.ps.exprs[unique(c(ly6dp.surface, ly6dn.surface, ly6d.ensembl)), ])))
+rownames(marker.heat) <- gene.df[rownames(marker.heat), ]$external_gene_name
+
+df.annot <- tec.ps.meta[, c("TECtype", "Day", "Sample")]
+rownames(df.annot) <- df.annot$Sample
+df.annot <- df.annot[colnames(marker.heat), -ncol(df.annot), drop=FALSE]
+
+day.cols <- c("orange1", "tan4")
+names(day.cols) <- c("d2", "d10")
+col.annot <- columnAnnotation(df=df.annot, col=list("TECtype"=samp.cols, "Day"=day.cols))
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/TEPC_surface-only_markers-heatmap.png",
+    height=6, width=12, res=300, units="in")
+Heatmap(marker.heat, show_column_names = FALSE, show_row_names = TRUE,
+        top_annotation=col.annot, cluster_column_slices=FALSE,
+        cluster_columns=TRUE,
+        column_split=df.annot$TECtype, column_title=NULL)
+dev.off()
+
+Heatmap(marker.heat, show_column_names = FALSE, show_row_names = TRUE,
+        top_annotation=col.annot, cluster_column_slices=FALSE,
+        cluster_columns=TRUE,
+        column_split=df.annot$TECtype, column_title=NULL)
+
+```
+
+
+
+## Marker/gene of interest plotting
+
+```{r}
+goi <- c("Mdk", "Fgf2rb", "Lifr", "Ccl21a", "Ly6d")
+goi.ensembl <- gene.df[gene.df$external_gene_name %in% goi, ]$ensembl_gene_id
+
+goi.expr.df <- as.data.frame(tec.ps.exprs[goi.ensembl, ])
+goi.expr.df$GeneID <- gene.df[rownames(goi.expr.df), ]$external_gene_name
+goi.expr.melt <- melt(goi.expr.df, id.vars="GeneID")
+goi.expr.melt$variable <- gsub(as.character(goi.expr.melt$variable), pattern="PBulk\\.Group", replacement="")
+goi.expr.melt$TECtype <- gsub(goi.expr.melt$variable, pattern="([[:ascii:]]* \\([0-9]+\\))_(R[0-9]+)_(d[0-9]+)", replacement="\\1", perl=TRUE)
+goi.expr.melt$Replicate <- gsub(goi.expr.melt$variable, pattern="([[:ascii:]]* \\([0-9]+\\))_(R[0-9]+)_(d[0-9]+)", replacement="\\2", perl=TRUE)
+goi.expr.melt$Day <- gsub(goi.expr.melt$variable, pattern="([[:ascii:]]* \\([0-9]+\\))_(R[0-9]+)_(d[0-9]+)", replacement="\\3", perl=TRUE)
+goi.expr.melt$Day <- factor(goi.expr.melt$Day, levels=c("d2", "d10"))
+```
+
+
+
+```{r, fig.height=6, fig.width=14}
+ggplot(goi.expr.melt, aes(x=TECtype, y=value, fill=Day)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_fill_manual(values=day.cols) +
+  facet_wrap(~GeneID)
+```
+
+
+```{r, fig.height=5.5, fig.width=10}
+ggplot(goi.expr.melt[goi.expr.melt$GeneID %in% c("Mdk"),], 
+       aes(x=TECtype, y=value, fill=Day)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white'),
+        strip.text=element_text(size=14, face="bold")) +
+  scale_fill_manual(values=day.cols) +
+  facet_wrap(~GeneID) +
+  labs(x="TEC type", y="Log pseudobulk expression")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Midkine_expression-allTEC-boxplot.png",
+       height=5.5, width=10, dpi=300, bg='white')
+```
+
+How many cells do we have in each cluster?
+
+```{r}
+tec.num <- dcast(perinatal.all.meta, formula = TEC.Label ~ SortType + TECSort + Day + Replicate, fill=0) %>%
+  pivot_longer(cols=!TEC.Label, names_to=c("Fraction", "TECSort", "Day", "Replicate"), names_pattern="(.*)_(.*)_(.*)_(.*)",
+               values_to="NCells")
+colnames(tec.num) <- c("TECtype", "Fraction", "TECSort", "Day", "Replicate", "NCells")
+tec.num$Day <- factor(tec.num$Day, levels=c("d2", "d10"), labels=c("D2", "D10"))
+```
+
+
+
+
+```{r, fig.height=6.5, fig.width=12}
+ggplot(tec.num, aes(x=TECtype, y=NCells, fill=TECSort)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        strip.background=element_rect(fill='white'),
+        strip.text=element_text(size=14, face="bold")) +
+  # scale_fill_manual(values=day.cols) +
+  facet_wrap(Fraction~Day)
+```
+
+
+
+```{r, fig.height=5, fig.width=5}
+ly6dneg.num <- tec.num[tec.num$TECtype %in% "Ly6d- Intertypical TEC (1)", ]
+ly6dpos.num <- tec.num[tec.num$TECtype %in% "Ly6d+ Intertypical TEC (4)", ]
+
+tepc.num <- merge(ly6dneg.num, ly6dpos.num, by=c("Replicate", "Day", "TECSort", "Fraction"))
+tepc.num$Ratio <- tepc.num$NCells.x/tepc.num$NCells.y
+
+ggplot(tepc.num, aes(x=Day, y=Ratio, fill=TECSort)) +
+  geom_boxplot() + 
+  theme_cowplot() +
+  facet_wrap(Fraction~TECSort, scales="free") +
+  expand_limits(y=c(0)) +
+  labs(x="Day post-dox", y="Ly6d-:Ly6d+")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Ly6d_iTEC_ratios-boxplot.png",
+       height=3.5, width=5, dpi=300, bg='white')
+```
+
+This shows that overall the ratio of Ly6d-:Ly6d+ intertypical TEC is much higher in the cortex, and even more so at day 2 vs. day 10 post-dox. The Ly6d+ cells are marginally 
+more numerous in the medulla and this increases over the short time course. One thing to note is that we also have to account for the differences in the total number of 
+cells in the cortex and medulla at each time point, as well as the sorting fraction.
+
+```{r}
+# computing cell frequencies
+tec.names <- apply(expand.grid(unique(tec.num$TECtype), c("ZsGn", "ZsGp")), 1,
+                   FUN=function(X) paste(X, collapse="_"))
+
+tec.freq.df <- tec.num %>% pivot_wider(names_from=c("TECtype"), values_from=NCells, id_cols=c("TECSort", "Replicate", "Day", "Fraction"), values_fill=0) %>%
+  group_by(Replicate, Day, Fraction) %>%
+  dplyr::select(`Aire+ mTEC (18)`:`Tuft-Primed Intertypical TEC (10)`) %>% mutate("Total.Cells"=rowSums(across(where(is.numeric)))) %>%
+  group_by(Replicate, Day, Fraction) %>%
+  mutate(across(c(1:13), ~.x/Total.Cells)) %>% pivot_longer(cols=!c("Replicate", "Day", "Fraction"), values_to="Freq", names_to="TECtype")
+# tec.sum <- 
+```
+
+
+```{r}
+write.table(tec.freq.df[tec.freq.df$TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)"), ],
+            file="/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/data/Ly6d_freqs.csv",
+            quote=FALSE, row.names=FALSE, sep=",")
+```
+
+
+
+```{r}
+tecsort.freq.df <- tec.num %>% pivot_wider(names_from=c("TECtype"), values_from=NCells, id_cols=c("TECSort", "Replicate", "Day", "Fraction"), values_fill=0) %>%
+  group_by(Day, Fraction, TECSort, Replicate) %>%
+  dplyr::select(`Aire+ mTEC (18)`:`Tuft-Primed Intertypical TEC (10)`) %>% mutate("Total.Cells"=rowSums(across(where(is.numeric)))) %>%
+  group_by(Day, Fraction, TECSort, Replicate) %>%
+  mutate(across(c(1:13), ~.x/Total.Cells)) %>% pivot_longer(cols=!c("Day", "Fraction", "TECSort", "Replicate"), values_to="Freq", names_to="TECtype")
+
+write.table(tecsort.freq.df[tecsort.freq.df$TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)"), ],
+            file="/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/data/Ly6d_freqs_TECSort.csv",
+            quote=FALSE, row.names=FALSE, sep=",")
+```
+
+Compute P(ZsG|Ly6d)
+
+```{r}
+tec.num %>% group_by(Replicate, Day, Fraction) %>% mutate("Total.Cells"=sum(NCells)) %>% group_by(Replicate, Day, Fraction) %>%
+  mutate("Freq"=NCells/Total.Cells) %>% group_by(Day, TECtype, Replicate, Fraction) %>% mutate("Freq"=sum(Freq)) %>%
+  dplyr::distinct(TECtype, Replicate, Day, Fraction, Freq) %>% group_by(Day, TECtype, Fraction) %>% summarise("Freq"=mean(Freq)) %>%
+  filter(TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") & Day == "d2")
+  # filter(TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") & Day == "d2") %>%
+  # summarise("Freq"=sum(Freq))
+
+
+```
+
+P(Ly6d | TEC, ZsG)
+
+```{r}
+ly6d.freqs <- tec.num %>% group_by(Replicate, Day, Fraction) %>% mutate("Total.Cells"=sum(NCells)) %>% group_by(Replicate, Day, Fraction, TECSort) %>%
+    mutate("Freq"=NCells/Total.Cells) %>% group_by(Day, TECtype, Replicate, Fraction, TECSort) %>% mutate("Freq"=sum(Freq)) %>%
+    dplyr::distinct(TECtype, Replicate, Day, Fraction, TECSort, Freq) %>% group_by(Day, TECtype, TECSort, Fraction) %>% group_by(TECtype, Day, Fraction, TECSort) %>%
+  summarise("SE.Freq"=sd(Freq)/sqrt(n()), "Ave.Freq"=mean(Freq), "Lower"=mean(Freq)-(sd(Freq)/sqrt(n())), "Upper"=mean(Freq)+(sd(Freq)/sqrt(n()))) %>%
+  filter(TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)"))
+  # filter(TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") & Day == "d2") %>%
+  # summarise("Freq"=sum(Freq))
+ly6d.freqs$Fraction <- factor(ly6d.freqs$Fraction, levels=c("ZsGp", "ZsGn"), labels=c("ZsG+", "ZsG-"))
+
+ly6d.cols <- c("#A67B99", "#999956")
+names(ly6d.cols) <- c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)")
+
+ggplot(ly6d.freqs, aes(x=Day, y=Ave.Freq, colour=TECtype)) +
+  geom_pointrange(aes(ymin=Lower, ymax=Upper),
+                  size=0.75, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_cowplot() +
+  facet_grid(Fraction ~ TECSort) +
+  labs(x="TEC", y="Proportion") +
+  scale_colour_manual(values=ly6d.cols) +
+  guides(colour=guide_legend(title="Subtype", override.aes=list(size=1))) +
+  theme(panel.grid.major=element_line(linetype="dashed", colour='grey90'),
+        panel.spacing=unit(1, "lines"), panel.background=element_rect(colour='grey80'),
+        strip.background=element_rect(fill='white'), strip.text=element_text(face='bold'))
+  
+```
+
+Frequencies in sc data
+
+```{r}
+tec.num %>% group_by(Replicate, Day, Fraction, TECSort) %>% mutate("Total.Cells"=sum(NCells)) %>% group_by(Replicate, Day, Fraction, TECSort) %>% 
+    dplyr::distinct(Fraction, Day, Replicate, Total.Cells) %>% group_by(Day, Replicate) %>% mutate("Freq"=Total.Cells/sum(Total.Cells)) %>% 
+  group_by(TECSort, Day, Fraction) %>%
+  summarise("Freq"=mean(Freq)) %>% filter(TECSort %in% c("cTEC"))
+```
+
+
+```{r}
+correct.df <- read.table("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/data/count_correction.csv",
+                         sep=",", header=TRUE)
+
+ly6d.merge <- merge(ly6d.freqs, correct.df, by=c("TECSort", "Day", "Fraction")) %>%
+  mutate("Corr.Freq"=Ave.Freq*Correction)
+ly6d.merge$Day <- factor(ly6d.merge$Day, levels=c("D2", "D10"), labels=c("Day2", "Day10"))
+```
+
+
+```{r, fig.height=4.75, fig.width=7}
+ggplot(ly6d.merge, aes(x=Day, y=Corr.Freq, colour=TECtype)) +
+  geom_point(size=4, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_cowplot() +
+  facet_grid(Fraction ~ TECSort) +
+  labs(x="TEC", y="Proportion (log10)") +
+  scale_colour_manual(values=ly6d.cols) +
+  guides(colour=guide_legend(title="Subtype", override.aes=list(size=4))) +
+  theme(panel.grid.major=element_line(linetype="dashed", colour='grey90'),
+        panel.spacing=unit(1, "lines"), panel.background=element_rect(colour='grey80'),
+        strip.background=element_rect(fill='white'), strip.text=element_text(face='bold')) +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x)))
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Ly6d_freqs-corrected.png",
+       height=4.75, width=7, dpi=600, bg='white')
+```
+
+
+If we take Andrea's gene set and try to classify TEC, which populations actually have the highest scores?
+
+```{r}
+ly6dneg.genes <- c("Ackr4", "Ap3b2", "Aqp4", "Atp7b", "Calcrl", "Cdh4", "Col1a2",
+                   "Cps1", "Cth", "Ctsl", "Cxcl12", "Dpysl2", "Dsc1", "Ednrb",
+                   "Fmod", "Fzd2", "Gnai1", "Grm8", "Gucy1a1", "Hic1", "Hpse2",
+                   "Igfbp2", "Igfbp3", "Ighm", "Igkc", "Il33", "Itga1", "Itgb7",
+                   "Jam3", "Jchain", "Kcnk2", "Kitl", "Klf15", "Lama2", "Lpar1",
+                   "Lypd1", "Mest", "Mme", "Mzb1", "Npy1r", "Ogn", "Parvb",
+                   "Prkcq", "Psmb11", "Ramp3", "Scn1a", "Sema3e", "Serpina3n", "Spon1",
+                   "Thbd", "Thbs4", "Tmprss15", "Tnfsf11", "Trpm2", "Zfp57")
+ly6dn.ensembl <- gene.df[gene.df$external_gene_name %in% ly6dneg.genes, ]$ensembl_gene_id
+
+ly6dpos.genes <- c( "Ackr1", "Ahr", "Aif1l", "Ano1", "Aqp3", "Aqp5", "Arg1", "Arhgef15",
+                    "Bbox1", "Bmp3", "Cacna1g", "Cadm3", "Casq2", "Cd276", "Cdkn2a", "Cfap44",
+                    "Cldn9", "Cntn2", "Col7a1", "Col9a3", "Csf2", "Cx3cr1", "Ece1", "Eng",
+                    "Epha2", "Flt1", "Foxj1", "Gpx2", "Hr", "Ifi208", "Il22ra1", "Il23r",
+                    "Itgb5", "Lgr6", "Matn1", "Mst1r", "Nhlh2", "Oxtr", "Pde7b", "Pdgfb",
+                    "Piezo2", "Pou3f1", "Prrx1", "Runx2", "Sidt1", "Sox10", "Sox21", "Syt2",
+                    "Tacstd2", "Tfap2c", "Tlr12", "Tlx1", "Tmprss4", "Tnfsf4", "Trem2", "Trpm6",
+                    "Trpv4", "Vit", "Wfdc18")
+ly6dp.ensembl <- gene.df[gene.df$external_gene_name %in% ly6dpos.genes, ]$ensembl_gene_id
+
+## updated scoring genes
+ly6dpos.update <- read.table("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/data/Ly6dPos_intersect.csv",
+                            sep=",", header=TRUE)
+ly6dpos.update.ens <- gene.df[gene.df$external_gene_name %in% ly6dpos.update$x, ]$ensembl_gene_id
+
+ly6dneg.update <- read.table("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/data/Ly6dNeg_intersect.csv",
+                             sep=",", header=TRUE)
+ly6dneg.update.ens <- gene.df[gene.df$external_gene_name %in% ly6dneg.update$x, ]$ensembl_gene_id
+
+
+# compute a score on each - high is Ly6d+, low is Ly6d-
+seurat.obj <- as.Seurat(perinatal.milo, counts="counts", data="logcounts")
+seurat.obj <- AddModuleScore(seurat.obj, features = list(ly6dn.ensembl), name = "Ly6d_neg_It_TEC", nbin = 18)
+seurat.obj <- AddModuleScore(seurat.obj, features = list(ly6dp.ensembl), name = "Ly6d_pos_It_TEC", nbin = 18)
+
+seurat.obj <- AddModuleScore(seurat.obj, features = list(ly6d.tepc.top$Gene), name = "Ly6dPos_score", nbin = 18)
+seurat.obj <- AddModuleScore(seurat.obj, features = list(ly6n.tepc.top$Gene), name = "Ly6dNeg_score", nbin = 18)
+
+seurat.obj <- AddModuleScore(seurat.obj, features = list(ly6dpos.update.ens), name = "Ly6dPos_intersect_score", nbin = 18)
+seurat.obj <- AddModuleScore(seurat.obj, features = list(ly6dneg.update.ens), name = "Ly6dNeg_intersect_score", nbin = 18)
+
+itec.modules <- (seurat.obj[[]])[, c("Ly6d_neg_It_TEC1", "Ly6d_pos_It_TEC1", "Ly6dPos_score1", "Ly6dNeg_score1", "Ly6dPos_intersect_score1", "Ly6dNeg_intersect_score1")]
+itec.modules$CellID <- rownames(seurat.obj[[]])
+
+meta.merge <- merge(perinatal.all.meta, itec.modules, by='CellID')
+
+sink(file="/dev/null")
+rm(list=c("seurat.obj"))
+gc()
+sink(file=NULL)
+```
+
+
+```{r}
+meta.merge$Is.Intertypical <- ifelse(meta.merge$TEC.Label %in% c("mTEC-Primed Intertypical TEC (8)", "cTEC-Primed Intertypical TEC (3)", "Ly6d- Intertypical TEC (1)",
+                                                                 "cTEC-Primed Intertypical TEC (6)", "Tuft-Primed Intertypical TEC (10)", "Intertypical cTEC-biased (13)",
+                                                                 "Ly6d+ Intertypical TEC (4)", "Primed-cycling TEC (9)", "mTEC-Primed Intertypical TEC (8)", "Intertypical (6)",
+                                                                 "Cycling Intertypical (15)"), "Yes", "No")
+```
+
+
+
+```{r, fig.height=5.5, fig.width=9}
+ggplot(meta.merge, aes(x=TEC.Label, y=Ly6d_neg_It_TEC1, fill=Is.Intertypical)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_fill_manual(values=c("Yes"='firebrick', "No"="grey90"))
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Lyd6neg_score-boxplot.png",
+       height=5.5, width=9, dpi=300, bg='white')
+```
+
+
+```{r, fig.height=5.5, fig.width=9}
+ggplot(meta.merge, aes(x=TEC.Label, y=Ly6d_pos_It_TEC1, fill=Is.Intertypical)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_fill_manual(values=c("Yes"='firebrick', "No"="grey90"))
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Lyd6pos_score-boxplot.png",
+       height=5.5, width=9, dpi=300, bg='white')
+```
+
+
+
+```{r, fig.height=5.5, fig.width=9}
+ggplot(meta.merge, aes(x=TEC.Label, y=Ly6dNeg_score1, fill=Is.Intertypical)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_fill_manual(values=c("Yes"='firebrick', "No"="grey90")) +
+  labs(y="Alternative Ly6d- module score")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Lyd6neg_ALTscore-boxplot.png",
+       height=5.5, width=9, dpi=300, bg='white')
+```
+
+
+
+```{r, fig.height=5.5, fig.width=9}
+ggplot(meta.merge, aes(x=TEC.Label, y=Ly6dPos_score1, fill=Is.Intertypical)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_fill_manual(values=c("Yes"='firebrick', "No"="grey90")) +
+  labs(y="Alternative Ly6d+ module score")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Lyd6pos_ALTscore-boxplot.png",
+       height=5.5, width=9, dpi=300, bg='white')
+```
+
+Using intersection of DE genes and Xenium measured genes to compute module scores.
+
+
+```{r, fig.height=5.5, fig.width=9}
+ggplot(meta.merge, aes(x=TEC.Label, y=Ly6dNeg_intersect_score1, fill=Is.Intertypical)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_fill_manual(values=c("Yes"='firebrick', "No"="grey90")) +
+  labs(y="Alternative Ly6d- module score")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Lyd6neg_Intersect-score-boxplot.png",
+       height=5.5, width=9, dpi=300, bg='white')
+```
+
+
+
+```{r, fig.height=5.5, fig.width=9}
+ggplot(meta.merge, aes(x=TEC.Label, y=Ly6dPos_intersect_score1, fill=Is.Intertypical)) +
+  geom_boxplot() +
+  theme_cowplot() +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  scale_fill_manual(values=c("Yes"='firebrick', "No"="grey90")) +
+  labs(y="Alternative Ly6d+ module score")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Lyd6pos_Intersect-score-boxplot.png",
+       height=5.5, width=9, dpi=300, bg='white')
+```
+
+How well do the gene sets agree with eachother?
+
+```{r, fig.height=4.5, fig.width=5}
+pos.cor <- round(cor(meta.merge$Ly6dPos_score1, meta.merge$Ly6dPos_intersect_score1, method="spearman"), 2)
+
+ggplot(meta.merge, aes(x=Ly6dPos_score1, y=Ly6dPos_intersect_score1, colour=Is.Intertypical)) +
+  geom_point() +
+  annotate(geom="text", y=0.75, x=0.25, size=5,
+           label=paste(c("\u03c1=", pos.cor), collapse="")) +
+  theme_cowplot() +
+  scale_colour_manual(values=c("Yes"='firebrick', "No"="grey90")) +
+  labs(x="Full gene score Ly6d+", y="Intersect gene score Ly6d+")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Ly6dPos_gene_score-scatter.png",
+       height=4.5, width=5, dpi=300, bg='white')
+```
+
+
+```{r, fig.height=4.5, fig.width=5}
+neg.cor <- round(cor(meta.merge$Ly6dNeg_score1, meta.merge$Ly6dNeg_intersect_score1, method="spearman"), 2)
+
+ggplot(meta.merge, aes(x=Ly6dNeg_score1, y=Ly6dNeg_intersect_score1, colour=Is.Intertypical)) +
+  geom_point() +
+  annotate(geom="text", y=0.75, x=0, size=5,
+           label=paste(c("\u03c1=", neg.cor), collapse="")) +
+  theme_cowplot() +
+  scale_colour_manual(values=c("Yes"='firebrick', "No"="grey90")) +
+  labs(x="Full gene score Ly6d-", y="Intersect gene score Ly6d-")
+
+ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Ly6dNeg_gene_score-scatter.png",
+       height=4.5, width=5, dpi=300, bg='white')
+```
+
+
+
