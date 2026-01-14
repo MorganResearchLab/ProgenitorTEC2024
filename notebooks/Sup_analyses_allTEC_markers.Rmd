@@ -23,6 +23,7 @@ library(dplyr)
 library(biomaRt)
 library(ComplexHeatmap)
   library(Seurat)
+  library(igraph)
 })
 ```
 
@@ -308,9 +309,9 @@ ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manu
        height=3.5, width=5, dpi=300, bg='white')
 ```
 
-This shows that overall the ratio of Ly6d-:Ly6d+ intertypical TEC is much higher in the cortex, and even more so at day 2 vs. day 10 post-dox. The Ly6d+ cells are marginally 
-more numerous in the medulla and this increases over the short time course. One thing to note is that we also have to account for the differences in the total number of 
-cells in the cortex and medulla at each time point, as well as the sorting fraction.
+This shows that overall the ratio of Ly6d-:Ly6d+ intertypical TEC is much higher in the cortex, and even more so at day 2 vs. day 10 post-dox. The Ly6d+ cells are marginally more 
+numerous in the medulla and this increases over the short time course. One thing to note is that we also have to account for the differences in the total number of cells in the 
+cortex and medulla at each time point, as well as the sorting fraction.
 
 ```{r}
 # computing cell frequencies
@@ -370,6 +371,8 @@ ly6d.freqs <- tec.num %>% group_by(Replicate, Day, Fraction) %>% mutate("Total.C
   # filter(TECtype %in% c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)") & Day == "d2") %>%
   # summarise("Freq"=sum(Freq))
 ly6d.freqs$Fraction <- factor(ly6d.freqs$Fraction, levels=c("ZsGp", "ZsGn"), labels=c("ZsG+", "ZsG-"))
+ly6d.freqs$Compartment <- factor(ly6d.freqs$TECSort,
+                                 levels=c("cTEC", "mTEC"), labels=c("Cortex", "Medulla"))
 
 ly6d.cols <- c("#A67B99", "#999956")
 names(ly6d.cols) <- c("Ly6d+ Intertypical TEC (4)", "Ly6d- Intertypical TEC (1)")
@@ -378,8 +381,8 @@ ggplot(ly6d.freqs, aes(x=Day, y=Ave.Freq, colour=TECtype)) +
   geom_pointrange(aes(ymin=Lower, ymax=Upper),
                   size=0.75, position=position_jitterdodge(jitter.width=0.1)) +
   theme_cowplot() +
-  facet_grid(Fraction ~ TECSort) +
-  labs(x="TEC", y="Proportion") +
+  facet_grid(Fraction ~ Compartment) +
+  labs(x="Day post-doxycyclin", y="Proportion of TEC") +
   scale_colour_manual(values=ly6d.cols) +
   guides(colour=guide_legend(title="Subtype", override.aes=list(size=1))) +
   theme(panel.grid.major=element_line(linetype="dashed", colour='grey90'),
@@ -405,6 +408,8 @@ correct.df <- read.table("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperim
 ly6d.merge <- merge(ly6d.freqs, correct.df, by=c("TECSort", "Day", "Fraction")) %>%
   mutate("Corr.Freq"=Ave.Freq*Correction)
 ly6d.merge$Day <- factor(ly6d.merge$Day, levels=c("D2", "D10"), labels=c("Day2", "Day10"))
+ly6d.merge$Compartment <- factor(ly6d.merge$TECSort,
+                                 levels=c("cTEC", "mTEC"), labels=c("Cortex", "Medulla"))
 ```
 
 
@@ -412,8 +417,8 @@ ly6d.merge$Day <- factor(ly6d.merge$Day, levels=c("D2", "D10"), labels=c("Day2",
 ggplot(ly6d.merge, aes(x=Day, y=Corr.Freq, colour=TECtype)) +
   geom_point(size=4, position=position_jitterdodge(jitter.width=0.1)) +
   theme_cowplot() +
-  facet_grid(Fraction ~ TECSort) +
-  labs(x="TEC", y="Proportion (log10)") +
+  facet_grid(Fraction ~ Compartment) +
+  labs(x="Day post-doxycyclin", y="Proportion of TEC (log10 scale)") +
   scale_colour_manual(values=ly6d.cols) +
   guides(colour=guide_legend(title="Subtype", override.aes=list(size=4))) +
   theme(panel.grid.major=element_line(linetype="dashed", colour='grey90'),
@@ -422,9 +427,39 @@ ggplot(ly6d.merge, aes(x=Day, y=Corr.Freq, colour=TECtype)) +
   scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
                 labels = trans_format("log10", math_format(10^.x)))
 
-ggsave("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Perinatal_manuscript/figures/Ly6d_freqs-corrected.png",
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6d_freqs-corrected.png",
        height=4.75, width=7, dpi=600, bg='white')
 ```
+
+Now compute the expected frequency of Ly6d+ and Ly6d- Intertypical TEC in the thymus (assuming they are also all EpCam+).
+
+```{r}
+fraction.weights <- data.frame("Fraction"=c("ZsG+", "ZsG-"),
+                               "Weight"=c(0.207, 0.793))
+ave.over.compart <- ly6d.merge %>% group_by(Day, Fraction, TECtype) %>% summarise("Sum.Freq"=sum(Corr.Freq)/2)
+ave.over.compart <- merge(ave.over.compart, fraction.weights, by=c("Fraction"))
+
+final.freq <- ave.over.compart %>% group_by(TECtype, Day) %>% summarise("Final.Freq"=sum(Sum.Freq * Weight))
+final.freq
+```
+
+
+```{r, fig.height=2.75, fig.width=5}
+ggplot(final.freq, aes(x=Day, y=Final.Freq*100, colour=TECtype)) +
+  geom_point(size=4, position=position_jitterdodge(jitter.width=0.1)) +
+  theme_cowplot() +
+  labs(x="Day post-doxycycline", y="Percentage of TEC") +
+  scale_colour_manual(values=ly6d.cols) +
+  guides(colour=guide_legend(title="Subtype", override.aes=list(size=4))) +
+  theme(panel.grid.major=element_line(linetype="dashed", colour='grey90'),
+        panel.spacing=unit(1, "lines"), panel.background=element_rect(colour='grey80'),
+        strip.background=element_rect(fill='white'), strip.text=element_text(face='bold')) +
+  expand_limits(y=c(0))
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6d_complete_freqs-corrected.png",
+       height=2.75, width=5, dpi=600, bg='white')
+```
+
 
 
 If we take Andrea's gene set and try to classify TEC, which populations actually have the highest scores?

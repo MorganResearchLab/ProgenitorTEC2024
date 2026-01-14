@@ -138,7 +138,7 @@ alluvium.df$Perinatal.Group <- factor(gsub(as.character(alluvium.df$Perinatal.Gr
 alluvium.df$Ageing <- factor(gsub(alluvium.df$Ageing, pattern="(\\S+_)([0-9]+)", replacement="\\2"),
                              levels=c(1:max.zsg))
 
-max.peri <- length(unique(alluvium.df$Perinatal))
+max.peri <- max(as.numeric(alluvium.df$Perinatal.Group))
 alluvium.df$Perinatal <- factor(alluvium.df$Perinatal,
                                 levels=c(1:max.peri))
 
@@ -243,7 +243,7 @@ alluvium.df$Perinatal.Group <- factor(gsub(as.character(alluvium.df$Perinatal.Gr
 alluvium.df$Ageing <- factor(gsub(alluvium.df$Ageing, pattern="(\\S+_)([0-9]+)", replacement="\\2"),
                              levels=c(1:max.zsg))
 
-max.peri <- length(unique(alluvium.df$Perinatal))
+max.peri <- max(as.numeric(alluvium.df$Perinatal.Group))
 alluvium.df$Perinatal <- factor(alluvium.df$Perinatal,
                                 levels=c(1:max.peri))
 
@@ -323,7 +323,7 @@ zsg.ageing.compare <- merge(zsg.neg.compare, zsg.pos.compare, by=merge.cols)
 ```
 
 
-```{r, fig.height=6, fig.width=9}
+```{r, fig.height=7, fig.width=12}
 # only plot the TEC labels with > 1 nhood
 nhtab <- table(zsg.ageing.compare$TEC.Label)
 zsg.ageing.compare$PlotNhood <- ifelse(zsg.ageing.compare$TEC.Label %in% names(nhtab)[nhtab > 3], TRUE, FALSE)
@@ -348,7 +348,7 @@ ggplot(zsg.ageing.compare[zsg.ageing.compare$PlotNhood, ],
   NULL
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ZsGAgeing_Compare-PerinatalLabels-scatter.png",
-       height=6, width=9, dpi=300)
+       height=7, width=12, dpi=300)
 ```
 
 This shows that the ageing-related abundance changes are concordant based on lineage for most TEC, i.e. ageing doesn't differentially affect based on origin within a given TEC state. The 
@@ -656,7 +656,7 @@ group_by <- ""
   pos_x <- beeswarm_pos$data[[1]]$x
   pos_y <- beeswarm_pos$data[[1]]$y
   
-  n_groups <- unique(itecneg.to.zsgneg.full$TEC.Label) %>% length()
+  n_groups <- levels(itecneg.to.zsgneg.full$TEC.Label) %>% length()
   
   itecneg.to.zsgneg.full %>%
     mutate(is_signif = ifelse(ZsG_Milo.SpatialFDR < alpha, 1, 0)) %>%
@@ -701,7 +701,7 @@ beeswarm_pos <- ggplot_build(
   pos_x <- beeswarm_pos$data[[1]]$x
   pos_y <- beeswarm_pos$data[[1]]$y
   
-  n_groups <- unique(itecpos.to.zsgpos.full$TEC.Label) %>% length()
+  n_groups <- levels(itecpos.to.zsgpos.full$TEC.Label) %>% length()
   
   itecpos.to.zsgpos.full %>%
     mutate(is_signif = ifelse(ZsG_Milo.SpatialFDR < alpha, 1, 0)) %>%
@@ -744,7 +744,7 @@ zsg.ageing.compare <- merge(zsg.neg.compare, zsg.pos.compare, by=merge.cols)
 ```
 
 
-```{r, fig.height=6, fig.width=9}
+```{r, fig.height=6, fig.width=11}
 # only plot the TEC labels with > 1 nhood
 nhtab <- table(zsg.ageing.compare$TEC.Label)
 zsg.ageing.compare$PlotNhood <- ifelse(zsg.ageing.compare$TEC.Label %in% names(nhtab)[nhtab > 3], TRUE, FALSE)
@@ -767,7 +767,7 @@ ggplot(zsg.ageing.compare[zsg.ageing.compare$PlotNhood, ], aes(x=ZsGPos_Milo.log
   NULL
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ZsGAgeing_Compare-iTECLabels-scatter.png",
-       height=6, width=9, dpi=300)
+       height=6, width=11, dpi=300)
 ```
 
 This indicates that generally effects are concordant between ZsG+ and ZsG- labelled cells. The exceptions are the cTEC-Primed and mTEC-Primed Intertypical TEC which are almost always 

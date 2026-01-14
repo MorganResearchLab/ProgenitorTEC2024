@@ -57,7 +57,7 @@ Bring together Perinatal and iTEC annotations.
 
 ```{r "load perinatal data"}
 # derive all of the relevant meta data
-perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+perinatal.milo <- readRDS("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
 
 colData(perinatal.milo)$SortType <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\1")
 colData(perinatal.milo)$TECSort <- gsub(perinatal.milo$HTO, pattern="(ZsG[n|p])_(d[0-9]+)_(\\S+)_(R[0-4])", replacement="\\3")
@@ -148,12 +148,15 @@ for(x in seq_along(itec.nhood.groups)){
 perinatal.meta[multiple.labels, ]$Nhood.iTEC <- NA
 to.label <- intersect(rownames(perinatal.meta[is.na(perinatal.meta$Nhood.iTEC), ]), colnames(itec.milo))
 
+itec.ids <- colnames(itec.milo)
+itec.graph <- miloR::graph(itec.milo)
+
 # for the multple labelled cells take the majority vote across all their neighbours
 for(i in seq_along(to.label)){
   i.cell <- to.label[i]
-  i.idx <- which(colnames(itec.milo) %in% i.cell)
-  i.neighbours <- neighbors(miloR::graph(itec.milo), i.idx)
-  i.tab <- table(perinatal.meta[colnames(itec.milo)[i.neighbours], ]$Nhood.iTEC)
+  i.idx <- which(itec.ids %in% i.cell)
+  i.neighbours <- neighbors(itec.graph, i.idx)
+  i.tab <- table(perinatal.meta[itec.ids[i.neighbours], ]$Nhood.iTEC)
   i.max <- names(i.tab)[which(i.tab == max(i.tab))]
   
   if(length(i.max) > 1){
@@ -161,6 +164,11 @@ for(i in seq_along(to.label)){
   }
   
   perinatal.meta[i.cell, ]$Nhood.iTEC <- i.max
+  
+  sink(file="/dev/null")
+  rm(list=c("i.neighbours", "i.tab", "i.max"))
+  gc()
+  sink(file=NULL)
 }
 ```
 
@@ -321,14 +329,17 @@ plot.paths <- names(out.deg)[out.deg > 1e-4]
 ```
 
 
-```{r, fig.width=12, fig.height=17}
+```{r, fig.width=12, fig.height=22}
+par(mar = c(0,0,0,0), xaxs="i", yaxs="i")
 # Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
-ht1 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths,  pattern = "outgoing", color.use=samp.cols, width=12, height=17)
-ht2 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths, pattern = "incoming", color.use=samp.cols, width=12, height=17)
+ht1 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths,  pattern = "outgoing", color.use=samp.cols, width=20, height=25)
+ht2 <- netAnalysis_signalingRole_heatmap(itec.chat, plot.paths, pattern = "incoming", color.use=samp.cols, width=20, height=25)
 # ht1 + ht2
 
 png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/CellChat_allPathways-heatmap.png",
-    height=17, width=12, res=600, units="in")
+    height=25, width=20, res=600, units="in")
+par(mar = c(0,0,0,0), xaxs="i", yaxs="i")
+
 ht2
 dev.off()
 

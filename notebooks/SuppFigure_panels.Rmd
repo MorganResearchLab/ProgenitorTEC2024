@@ -85,21 +85,26 @@ hto.df <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/data/HTO_c
 hto.df$SampName <- gsub(hto.df$ID, pattern="(Newborn)_(ZsG[a-z]+)_(\\S+Run)_([m|c]TEC)_(HTO_[ATCG]+-1)", replacement="\\2_\\3_\\4")
 ```
 
-```{r "HTO doublet plotting", fig.height=4.75, fig.width=9}
+
+```{r "HTO doublet plotting", fig.height=5, fig.width=9}
+set.seed(42)
 # its easier to tabulate and summarise so the numbers can be added
 hto.summ.df <- hto.df %>% group_by(SampName) %>% count(Class) %>% mutate(Prop.HTO=n/sum(n))
 
 ggplot(hto.summ.df, aes(x=SampName, y=Prop.HTO, fill=Class)) +
   geom_bar(stat='identity', position="dodge") +
-  geom_text(aes(label=round(n, 3), group=Class), position=position_dodge(width=1)) +
+  geom_text(aes(y=Prop.HTO+0.1, label=round(n, 3), group=Class),
+            position=position_dodge(width=1), size=4.5, angle=90) +
   theme_cowplot() +
-  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1)) +
+  theme(axis.text.x=element_text(angle=90, vjust=0.5, hjust=1),
+        ) +
   labs(x="Sample ID", y="Proportion in HTO class") +
   scale_fill_d3() +
+  expand_limits(y=c(0, 1.15)) +
   NULL
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/HTO_doublets-bar.png",
-       height=4.75, width=9, dpi=300, bg='white')
+       height=5, width=9, dpi=300, bg='white')
 ```
 
 # Comparison to Wells *et al.* data

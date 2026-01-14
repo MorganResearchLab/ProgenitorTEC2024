@@ -43,7 +43,7 @@ The input is the Milo object which contains the post-QC single-cells, and the in
 
 ```{r}
 # derive all of the relevant meta data
-perinatal.milo <- readRDS("~/Dropbox/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
+perinatal.milo <- readRDS("/Volumes/Single_Cell_Genetics-CF10180-29/AgeingExperiment/Newborn/milo.dir/Perinatal_Milo.RDS")
 sf.df <- data.frame("CellID"=colnames(perinatal.milo), "SizeFactors"=sizeFactors(perinatal.milo))
 
 itec.cells <- read.table("~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC.txt",
@@ -79,6 +79,7 @@ their structure, expression profiles and a more high-resolution DA analysis.
 # Highly variable gene selection and dimensionality reduction
 
 ```{r, warning=FALSE, message=FALSE}
+set.seed(42)
 itec.hvgs <- modelGeneVar(itec.sce)
 itec.hvgs$FDR[is.na(itec.hvgs$FDR)] <- 1
 table(itec.hvgs$FDR < 0.1)
@@ -90,6 +91,7 @@ Across these cells we find 637 HVGs at 10% FDR.
 set.seed(42)
 itec.pca <- prcomp_irlba(t(logcounts(itec.sce[itec.hvgs$FDR < 0.1, ])), n=50)
 reducedDim(itec.sce, "PCA") <- itec.pca$x
+set.seed(42)
 mnn.umap.map <- as.data.frame(umap(as.matrix(reducedDim(itec.sce, "PCA")[, c(1:30)]),
                                    n_neighbors=30,
                                    init='random',
@@ -101,6 +103,7 @@ rownames(mnn.umap.map) <- colnames(itec.sce)
 reducedDim(itec.sce, "UMAP") <- as.matrix(mnn.umap.map)
 mnn.umap.map$CellID <- colnames(itec.sce)
 
+set.seed(42)
 itec.knn <- buildKNNGraph(reducedDim(itec.sce, "PCA")[, c(1:30)], transposed=TRUE, k=30)
 itec.fr <- as.data.frame(layout_with_fr(itec.knn))
 colnames(itec.fr) <- c("FR1", "FR2")
@@ -338,7 +341,7 @@ plotNhoodGraphDA(itec.milo, milo_res=itec.zsg.res, alpha=0.1, layout='UMAP') +
     NULL
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsG_Dayadjusted.png",
-           heigh=3.15, width=4.95, dpi=300)
+           height=3.15, width=4.95, dpi=300)
 ```
 
 This also shows that the Sca1+ MHCIIlo Intertypical TEC are generally ZsG-. This supports the notion that mTEC and cTEC are derived from $\beta$5t- 
@@ -361,7 +364,7 @@ plotNhoodGraphDA(itec.milo, milo_res=itec.res, alpha=0.1, layout='FR') +
     NULL
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-Day_ZsGadjusted.png",
-           heigh=5.15, width=7.95, dpi=300)
+           height=5.15, width=7.95, dpi=300)
 ```
 
 This is mostly a sense check to show that cells moving into the cortical lineage are enriched in the ZsG+ fraction, and the others are depleted.
@@ -371,7 +374,7 @@ plotNhoodGraphDA(itec.milo, milo_res=itec.res, alpha=0.1, layout='UMAP') +
     NULL
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-Day_ZsGadjusted.png",
-           heigh=4.15, width=4.95, dpi=300)
+           height=5.15, width=4.95, dpi=300)
 ```
 
 In general there's a pretty strong depletion of the most progenitor-like Intertypical TEC, and a modest enrichment of cells on the border of these 
@@ -384,7 +387,7 @@ plotNhoodGraphDA(itec.milo, milo_res=itec.res, alpha=0.1, layout='FR') +
     NULL
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_logFC-Day_ZsGadjusted.png",
-           heigh=5.15, width=7.95, dpi=300)
+           height=5.15, width=7.95, dpi=300)
 ```
 
 This FR layout supports the UMAP as we can start to see how the smaller population at the very bottom might be considered separate from the population 
@@ -430,7 +433,7 @@ ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_log
 plotNhoodGraphDA(itec.milo, milo_res=zsgp.itec.int.res, alpha=0.1, layout='UMAP')
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGpos_Day_TECsortadjusted.png",
-           height=3.95, width=4.95, dpi=300)
+           height=5.95, width=7.95, dpi=300)
 ```
 
 Hmm, there is a _very_ strong enrichment in that left-hand Intertypical population that seems to spread out towards the bottom right, which I'm 
@@ -470,7 +473,7 @@ ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_log
 plotNhoodGraphDA(itec.milo, milo_res=zsgn.itec.int.res, alpha=0.1, layout='UMAP')
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGneg_Day_TECsortadjusted.png",
-           height=3.95, width=4.95, dpi=300)
+           height=5.95, width=7.95, dpi=300)
 ```
 
 This _is_ interesting. There is a depletion of the cTEC-like Intertypical TEC, but there remains an enrichment in what I would think of as the most 
@@ -515,14 +518,24 @@ ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_Milo_iTEC_log
 plotNhoodGraphDA(itec.milo, milo_res=zsg.itec.int.res, alpha=0.1, layout='UMAP')
 
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/UMAP_Milo_iTEC_logFC-ZsGVsDayinteraction_TECsortadjusted.png",
-           heigh=3.95, width=4.95, dpi=300)
+           heigh=5.95, width=4.95, dpi=300)
 ```
 
 Interesting. The _only_ accumulation is in the cTEC compartment.
 
 ```{r, warning=FALSE, message=FALSE}
-set.seed(101)
+set.seed(42)
 itec.res <- groupNhoods(itec.milo, itec.res, da.fdr=0.1, overlap=5, merge.discord=FALSE)
+
+# nhood group label 3 and 4 have been swapped
+
+remap <- list("NhoodGroup"=as.character(c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)), 
+              "Original"=as.character(c(1, 5, 4, 3, 2, 8, 6, 7, 9, 10)))
+remap.df <- do.call(cbind.data.frame, remap)
+itec.res <- merge(itec.res, remap.df, by="NhoodGroup", all.x=TRUE)
+itec.res$New.NhGroup <- itec.res$NhoodGroup
+itec.res$NhoodGroup <- itec.res$Original
+itec.res <- itec.res[order(itec.res$Nhood), ]
 
 nhood.df <- data.frame("NhoodIdx"=colnames(nhoods(itec.milo)), "Nhood"=seq_len(ncol(nhoods(itec.milo))))
 write.table(nhood.df, file="~/Dropbox/AgeingExperiment/Perinatal_manuscript/results/Perinatal_iTEC_Nhood-NhoodGroup_map.tsv",
@@ -532,12 +545,12 @@ n.groups <- length(unique(itec.res$NhoodGroup))
 table(itec.res$NhoodGroup)
 ```
 
-We find 18 nhood groups across the itec experiment manifold - this is based on using the number of overlapping cells between nhood pairs as 
+We find 10 nhood groups across the itec experiment manifold - this is based on using the number of overlapping cells between nhood pairs as 
 the adjacency matrix for the KNN-graph building and Louvain clustering.
 
 ```{r, warning=FALSE, message=FALSE, , fig.height=5.25, fig.width=7.95}
 samp.cols <- colorRampPalette(pal_d3("category20")(20))(n.groups)
-names(samp.cols) <- unique(itec.res$NhoodGroup)
+names(samp.cols) <- unique(itec.res$NhoodGroup)[order(as.numeric(unique(itec.res$NhoodGroup)))]
 
 plotNhoodGroups(x=itec.milo, milo_res=itec.res, layout='FR') +
     guides(fill=guide_legend(ncol=3, title="NhoodGroup",
@@ -548,6 +561,7 @@ plotNhoodGroups(x=itec.milo, milo_res=itec.res, layout='FR') +
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/FR_iTEC_ZsGreen-NhoodGroups.png",
            height=5.25, width=6.95)
 ```
+
 
 
 ```{r, warning=FALSE, message=FALSE, , fig.height=5.25, fig.width=7.95}
@@ -599,7 +613,8 @@ specific.genes <- sapply(seq_along(top.gene.list), FUN=function(X){
     setdiff(x.genes, x.notgenes)
 })
 
-specific.genes <- c(specific.genes, gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Foxn1", "Aire", "Cd52", "Psmb11", "Enpep")])
+specific.genes <- c(specific.genes, gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Foxn1", "Aire", "Cd52", "Ly6d",
+                                                                                              "Psmb11", "Enpep", "Plet1")])
 ```
 
 
@@ -607,7 +622,7 @@ specific.genes <- c(specific.genes, gene.df$ensembl_gene_id[gene.df$external_gen
 ```{r, warning=FALSE, message=FALSE, fig.height=13.15, fig.width=9.15}
 ht_opt$message = FALSE
 
-hm.exprs <- nhoodExpression(itec.milo)[unlist(specific.genes), ]
+hm.exprs <- nhoodExpression(itec.milo)[unique(unlist(specific.genes)), ]
 row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
 row.order <- row.order[!is.na(row.order)]
 rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
@@ -688,7 +703,7 @@ specific.tf.genes <- sapply(seq_along(tf.gene.list), FUN=function(X){
 # plot the marker genes that are also TFs.
 ht_opt$message = FALSE
 
-hm.exprs <- nhoodExpression(itec.milo)[unlist(specific.tf.genes), ]
+hm.exprs <- nhoodExpression(itec.milo)[rownames(nhoodExpression(itec.milo)) %in% unlist(specific.tf.genes), ]
 row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
 row.order <- row.order[!is.na(row.order)]
 rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
@@ -743,7 +758,7 @@ Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
 What about a deeper dive into the Ly6d+/- intertypical TEC? I'll find DEGs between them that are not also expressed in other TEC states.
 
 ```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=7.95}
-prog.groups <- c("1", "4", "6")
+prog.groups <- c("1", "4")
 
 i.nhoods <- itec.res$Nhood[itec.res$NhoodGroup %in% prog.groups]
 i.cells <- colnames(itec.milo)[rowSums(nhoods(itec.milo)[, itec.res$NhoodGroup %in% prog.groups, drop=FALSE]) > 0]
@@ -751,9 +766,9 @@ i.meta <- colData(itec.milo)[i.cells, ]
 
 # annotate the cells
 nh.1 <- colnames(itec.milo)[rowSums(nhoods(itec.milo)[, itec.res$NhoodGroup %in% c(4), drop=FALSE]) > 0]
-nh.5 <- colnames(itec.milo)[rowSums(nhoods(itec.milo)[, itec.res$NhoodGroup %in% c(1, 7), drop=FALSE]) > 0]
+nh.5 <- colnames(itec.milo)[rowSums(nhoods(itec.milo)[, itec.res$NhoodGroup %in% c(1), drop=FALSE]) > 0]
 not.nh <- intersect(nh.1, nh.5)
-i.meta$TECType <- "1,6"
+i.meta$TECType <- "1"
 i.meta$TECType[rownames(i.meta) %in% nh.1] <- "4"
 i.meta <- i.meta[!rownames(i.meta) %in% not.nh, ]
 i.meta$TEC.HTO <- paste(i.meta$HTO, i.meta$TECType, sep="_")
@@ -821,169 +836,6 @@ ggplot(pTEC.res, aes(x=logFC, y=-log10(FDR), colour=FDR < 0.1)) +
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/Ly6dp_vs_Ly6dn-volcano.png",
        height=5, width=8, dpi=300, bg='white')
 ```
-
-# Ly6d DGE + Functional enrichment analysis
-
-### GSEA - Hallmark
-
-```{r}
-# get pathways as a name list, one slot per pathway
-ly6dp.lfc.ranks <- pTEC.res$logFC
-names(ly6dp.lfc.ranks) <- pTEC.res$external_gene_name
-test.path.df <- msigdbr(species="Mus musculus", category="C2", subcategory="CGP")
-# test.path.df <- msigdbr(species="Mus musculus", category="C2", subcategory="CP:KEGG")
-# test.path.df <- msigdbr(species="Mus musculus", category="C3", subcategory="TFT:GTRD")
-test.path <- split(test.path.df$gene_symbol, test.path.df$gs_name)
-
-# make the names pretty
-names(test.path) <- gsub(names(test.path), pattern="(HALLMARK|KEGG)_(\\S*)", replacement="\\2")
-names(test.path) <- gsub(names(test.path), pattern="_", replacement=" ")
-names(test.path) <- str_to_title(names(test.path))
-
-# reactome.path <- reactomePathways(names(ly6d.lfc.ranks))
-# de-duplicate gene symbols
-ly6dp.lfc.ranks <- ly6dp.lfc.ranks[!duplicated(names(ly6dp.lfc.ranks))] 
-
-fgseaRes <- fgsea(pathways=test.path, stats=ly6dp.lfc.ranks, eps=0)
-fgseaRes <- fgseaRes[!is.na(fgseaRes$NES), ]
-head(fgseaRes[order(fgseaRes$padj), ])
-```
-
-
-```{r, height=4, width=6}
-fgseaRes <- fgseaRes[order(fgseaRes$NES), ]
-topPathways <- fgseaRes[fgseaRes$padj < 0.01, pathway]
-
-plotGseaTable(test.path[topPathways], ly6dp.lfc.ranks, fgseaRes[order(fgseaRes$NES), ], 
-              gseaParam=0.5)
-
-ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Ly6dMarkers-GSEA_HallmarkCGP.png",
-       height=6, width=6, dpi=300, bg='white')
-```
-
-
-
-```{r}
-enrich.hm.sigs <- fgseaRes$pathway[fgseaRes$padj < 0.01]
-enrich.hm.exprs <- do.call(rbind, sapply(enrich.hm.sigs, FUN=function(EX, gene.exp, gsea.df, gene.map){
-  gsea.genes <- gene.map[gene.map$external_gene_name %in% unlist(gsea.df[gsea.df$pathway %in% EX, ]$leadingEdge), ]$ensembl_gene_id
-  gsea.expr <- colSums2(gene.exp[gsea.genes, ])/length(gsea.genes)
-  gsea.expr
-  }, gsea.df=fgseaRes, gene.exp=nhoodExpression(itec.milo), gene.map=gene.df, simplify=FALSE))
-
-rownames(enrich.hm.exprs) <- enrich.hm.sigs
-colnames(enrich.hm.exprs) <- colnames(nhoodExpression(itec.milo))
-```
-
-
-```{r, warning=FALSE, message=FALSE, fig.height=6, fig.width=10.15}
-ht_opt$message = FALSE
-hm.exprs <- t(apply(enrich.hm.exprs, 1, scale))
-
-# hm.cols <- viridis(n=20, option='magma')
-exp.quants <- quantile(hm.exprs, c(0.01, 0.99))
-hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "purple"))
-
-annot.df <- data.frame("Nhood"=itec.zsg.res.merge$Nhood, 
-                       "TECGroup"=itec.zsg.res.merge$NhoodLabel)
-
-rownames(annot.df) <- annot.df$Nhood
-col.order <- order(annot.df$TECGroup)
-# col.order <- order(annot.df$TECGroup)
-
-max.lfc <- abs(max(annot.df$logFC))
-lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
-
-annot.df <- annot.df[, -1, drop=FALSE]
-
-col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
-                               col=list("TECGroup"=tec.cols))
-
-
-png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/GSEA-HallMarkCGP_iTEC-ZsGreen-Nhood_heatmap.png",
-    height=6, width=10.15, res=300, units="in")
-Heatmap(hm.exprs[, col.order], col=hm.cols,
-        use_raster=TRUE, cluster_rows=TRUE,
-        heatmap_legend_param=list(title="log\ncounts"),
-        show_column_names=FALSE, cluster_columns=FALSE,
-        show_row_names=TRUE,
-        top_annotation=col.annot)
-dev.off()
-
-
-Heatmap(hm.exprs[, col.order], col=hm.cols,
-        use_raster=TRUE, cluster_rows=TRUE,
-        heatmap_legend_param=list(title="log\ncounts"),
-        show_column_names=FALSE, cluster_columns=FALSE,
-        show_row_names=TRUE,
-        top_annotation=col.annot)
-```
-
-
-
-
-
-
-```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=7.95}
-progenitor.genes <- c((pTEC.res$GeneID[order(pTEC.res$logFC, decreasing=TRUE)])[1:15],
-                      (pTEC.res$GeneID[order(pTEC.res$logFC, decreasing=FALSE)])[1:15], 
-                      gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Ly6d")])
-```
-
-
-
-```{r, warning=FALSE, message=FALSE, fig.height=7, fig.width=9.15}
-ht_opt$message = FALSE
-
-hm.exprs <- nhoodExpression(itec.milo)[unlist(progenitor.genes), ]
-row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
-row.order <- row.order[!is.na(row.order)]
-rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
-
-# hm.exprs <- hm.exprs[!is.na(rownames(hm.exprs)), ]
-# hm.exprs <- hm.exprs[rowMeans(hm.exprs) > 0.5, ]
-# row scale the hm matrix
-hm.exprs <- t(apply(hm.exprs, 1, scale))
-
-exp.quants <- quantile(hm.exprs, c(0.01, 0.99))
-hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "purple"))
-
-annot.df <- data.frame("Nhood"=itec.res$Nhood, 
-                       "NhoodGroup"=itec.res$NhoodGroup,
-                       "logFC"=itec.res$logFC)
-annot.df$logFC[itec.res$SpatialFDR < 0.1] <- 0
-annot.df$NhoodGroup <- factor(annot.df$NhoodGroup, levels=c(1:n.groups))
-
-rownames(annot.df) <- annot.df$Nhood
-col.order <- order(annot.df$NhoodGroup, annot.df$logFC)
-
-max.lfc <- abs(max(annot.df$logFC))
-lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
-
-annot.df <- annot.df[, -1]
-col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
-                               col=list("NhoodGroup"=samp.cols,
-                                        "logFC"=lfc.cols))
-
-png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ProgenitorMarker_iTEC-ZsGreen-Nhood_heatmap.png",
-    height=7, width=9.15, res=300, units="in")
-Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
-        # column_split=annot.df[col.order, ]$NhoodGroup,
-        use_raster=TRUE,  cluster_rows=TRUE,
-        show_column_names=FALSE, cluster_columns=FALSE,
-        top_annotation=col.annot)
-dev.off()
-
-
-Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
-        # column_split=annot.df[col.order, ]$NhoodGroup,
-        use_raster=TRUE, cluster_rows=TRUE,
-        show_column_names=FALSE, cluster_columns=FALSE,
-        top_annotation=col.annot)
-```
-
-Can we get any insight into the drivers of cell identity in these 2 populations using functional enrichment testing?
-
 
 ## Marker gene visualisation
 
@@ -1083,7 +935,7 @@ For the paper figure I'll just take 2-3 genes.
 ht_opt$message = FALSE
 
 hm.exprs <- nhoodExpression(itec.milo)[unlist(specific.genes), ]
-hm.exprs <- hm.exprs[!rownames(hm.exprs) %in% gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Aire", "Foxn1", "Psmb11", "Cd52", "Enpep")], ]
+hm.exprs <- hm.exprs[!rownames(hm.exprs) %in% gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Aire", "Foxn1", "Psmb11", "Cd52", "Enpep", "Itga6", "Plet1")], ]
 row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
 row.order <- row.order[!is.na(row.order)]
 rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
@@ -1157,7 +1009,7 @@ specific.genes <- sapply(seq_along(top.gene.list), FUN=function(X){
     setdiff(x.genes, x.notgenes)
 })
 
-specific.genes <- c(specific.genes, gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Foxn1", "Aire", "Cd52", "Psmb11", "Enpep")])
+specific.genes <- c(specific.genes, gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Foxn1", "Aire", "Cd52", "Psmb11", "Enpep", "Itga6", "Plet1")])
 ```
 
 
@@ -1213,7 +1065,6 @@ Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
         show_column_names=FALSE, cluster_columns=FALSE,
         top_annotation=col.annot)
 ```
-
 
 
 I want a heatmap of the lineage and progenitor TEC markers from the literature.
@@ -1837,6 +1688,174 @@ ggplot(day.dge.df, aes(x=logCPM, y=logFC, colour=FDR < 0.01)) +
 ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Day_DGE-MAplot_TECfacet.png",
        height=9, width=12, dpi=300, bg='white')
 ```
+
+
+# Ly6d DGE + Functional enrichment analysis
+
+### GSEA - Hallmark
+
+```{r}
+# get pathways as a name list, one slot per pathway
+ly6dp.lfc.ranks <- pTEC.res$logFC
+names(ly6dp.lfc.ranks) <- pTEC.res$external_gene_name
+test.path.df <- msigdbr(species="Mus musculus", category="C2", subcategory="CGP")
+# test.path.df <- msigdbr(species="Mus musculus", category="C2", subcategory="CP:KEGG")
+# test.path.df <- msigdbr(species="Mus musculus", category="C3", subcategory="TFT:GTRD")
+test.path <- split(test.path.df$gene_symbol, test.path.df$gs_name)
+
+# make the names pretty
+names(test.path) <- gsub(names(test.path), pattern="(HALLMARK|KEGG)_(\\S*)", replacement="\\2")
+names(test.path) <- gsub(names(test.path), pattern="_", replacement=" ")
+names(test.path) <- str_to_title(names(test.path))
+
+# reactome.path <- reactomePathways(names(ly6d.lfc.ranks))
+# de-duplicate gene symbols
+ly6dp.lfc.ranks <- ly6dp.lfc.ranks[!duplicated(names(ly6dp.lfc.ranks))]
+# remove empty names
+ly6dp.lfc.ranks <- ly6dp.lfc.ranks[which(names(ly6dp.lfc.ranks) != "")]
+
+fgseaRes <- fgsea(pathways=test.path, stats=ly6dp.lfc.ranks, eps=0)
+fgseaRes <- fgseaRes[!is.na(fgseaRes$NES), ]
+head(fgseaRes[order(fgseaRes$padj), ])
+```
+
+
+```{r, height=4, width=6}
+fgseaRes <- fgseaRes[order(fgseaRes$NES), ]
+topPathways <- fgseaRes[fgseaRes$padj < 0.0001, pathway]
+
+plotGseaTable(test.path[topPathways], ly6dp.lfc.ranks, fgseaRes[order(fgseaRes$NES), ], 
+              gseaParam=0.5)
+
+ggsave("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/iTEC_Ly6dMarkers-GSEA_HallmarkCGP.png",
+       height=6, width=6, dpi=300, bg='white')
+```
+
+
+
+```{r}
+enrich.hm.sigs <- fgseaRes$pathway[fgseaRes$padj < 0.01]
+enrich.hm.exprs <- do.call(rbind, sapply(enrich.hm.sigs, FUN=function(EX, gene.exp, gsea.df, gene.map){
+  gsea.genes <- gene.map[gene.map$external_gene_name %in% unlist(gsea.df[gsea.df$pathway %in% EX, ]$leadingEdge), ]$ensembl_gene_id
+
+  gsea.expr <- colSums2(gene.exp[rownames(gene.exp) %in% gsea.genes, ])/length(gsea.genes)
+  gsea.expr
+  }, gsea.df=fgseaRes, gene.exp=nhoodExpression(itec.milo), gene.map=gene.df, simplify=FALSE))
+
+rownames(enrich.hm.exprs) <- enrich.hm.sigs
+colnames(enrich.hm.exprs) <- colnames(nhoodExpression(itec.milo))
+```
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=6, fig.width=10.15}
+ht_opt$message = FALSE
+hm.exprs <- t(apply(enrich.hm.exprs, 1, scale))
+
+# hm.cols <- viridis(n=20, option='magma')
+exp.quants <- quantile(hm.exprs, c(0.01, 0.99))
+hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "purple"))
+
+annot.df <- data.frame("Nhood"=itec.zsg.res.merge$Nhood, 
+                       "TECGroup"=itec.zsg.res.merge$NhoodLabel)
+
+rownames(annot.df) <- annot.df$Nhood
+col.order <- order(annot.df$TECGroup)
+# col.order <- order(annot.df$TECGroup)
+
+max.lfc <- abs(max(annot.df$logFC))
+lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
+
+annot.df <- annot.df[, -1, drop=FALSE]
+
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, , drop=FALSE],
+                               col=list("TECGroup"=tec.cols))
+
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/GSEA-HallMarkCGP_iTEC-ZsGreen-Nhood_heatmap.png",
+    height=6, width=10.15, res=300, units="in")
+Heatmap(hm.exprs[, col.order], col=hm.cols,
+        use_raster=TRUE, cluster_rows=TRUE,
+        heatmap_legend_param=list(title="log\ncounts"),
+        show_column_names=FALSE, cluster_columns=FALSE,
+        show_row_names=TRUE,
+        top_annotation=col.annot)
+dev.off()
+
+
+Heatmap(hm.exprs[, col.order], col=hm.cols,
+        use_raster=TRUE, cluster_rows=TRUE,
+        heatmap_legend_param=list(title="log\ncounts"),
+        show_column_names=FALSE, cluster_columns=FALSE,
+        show_row_names=TRUE,
+        top_annotation=col.annot)
+```
+
+
+
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=3.95, fig.width=7.95}
+progenitor.genes <- c((pTEC.res$GeneID[order(pTEC.res$logFC, decreasing=TRUE)])[1:15],
+                      (pTEC.res$GeneID[order(pTEC.res$logFC, decreasing=FALSE)])[1:15], 
+                      gene.df$ensembl_gene_id[gene.df$external_gene_name %in% c("Ly6d")])
+```
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.height=7, fig.width=9.15}
+ht_opt$message = FALSE
+
+hm.exprs <- nhoodExpression(itec.milo)[unlist(progenitor.genes), ]
+row.order <- gene.df[rownames(hm.exprs), ]$external_gene_name
+row.order <- row.order[!is.na(row.order)]
+rownames(hm.exprs) <- gene.df[rownames(hm.exprs), ]$external_gene_name
+
+# hm.exprs <- hm.exprs[!is.na(rownames(hm.exprs)), ]
+# hm.exprs <- hm.exprs[rowMeans(hm.exprs) > 0.5, ]
+# row scale the hm matrix
+hm.exprs <- t(apply(hm.exprs, 1, scale))
+
+exp.quants <- quantile(hm.exprs, c(0.01, 0.99))
+hm.cols <- colorRamp2(c(exp.quants[1], 0, exp.quants[2]), c("white", "lightyellow", "purple"))
+
+annot.df <- data.frame("Nhood"=itec.res$Nhood, 
+                       "NhoodGroup"=itec.res$NhoodGroup,
+                       "logFC"=itec.res$logFC)
+annot.df$logFC[itec.res$SpatialFDR < 0.1] <- 0
+annot.df$NhoodGroup <- factor(annot.df$NhoodGroup, levels=c(1:n.groups))
+
+rownames(annot.df) <- annot.df$Nhood
+col.order <- order(annot.df$NhoodGroup, annot.df$logFC)
+
+max.lfc <- abs(max(annot.df$logFC))
+lfc.cols <- colorRamp2(c(-max.lfc, 0, max.lfc), c("red", "white", "blue"))
+
+annot.df <- annot.df[, -1]
+col.annot <- HeatmapAnnotation(df=annot.df[col.order, ],
+                               col=list("NhoodGroup"=samp.cols,
+                                        "logFC"=lfc.cols))
+
+png("~/Dropbox/AgeingExperiment/Perinatal_manuscript/figures/ProgenitorMarker_iTEC-ZsGreen-Nhood_heatmap.png",
+    height=7, width=9.15, res=300, units="in")
+Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE,  cluster_rows=TRUE,
+        show_column_names=FALSE, cluster_columns=FALSE,
+        top_annotation=col.annot)
+dev.off()
+
+
+Heatmap(hm.exprs[row.order, col.order], col=hm.cols,
+        # column_split=annot.df[col.order, ]$NhoodGroup,
+        use_raster=TRUE, cluster_rows=TRUE,
+        show_column_names=FALSE, cluster_columns=FALSE,
+        top_annotation=col.annot)
+```
+
+Can we get any insight into the drivers of cell identity in these 2 populations using functional enrichment testing?
+
+
 
 # Ly6d DGE + Functional enrichment analysis
 
